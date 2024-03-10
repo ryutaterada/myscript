@@ -29,6 +29,8 @@ $unknownLogName = "UnknownEventList_$($time).csv"
 $unknownLogPath = "$($path)\$($unknownLogName)"
 # 未知のイベントログリスト
 $unknownLogList = [System.Collections.ArrayList]@()
+# 未知のイベントログ件数リスト
+$unknownLogCountList = [System.Collections.ArrayList]@()
 # イベントログ取得件数
 $eventCount = 10000
 # イベントログ名
@@ -55,11 +57,15 @@ foreach ($log in $eventLogs) {
     if (!($log.Id -in $csvData.Id -and $log.ProviderName -in $csvData.ProviderName) -and !($log.Id -in $unknownLogList.Id -and $log.ProviderName -in $unknownLogList.ProviderName)) {
         # 未知のエラー
         Write-Host "未知のエラー: イベントID $($log.Id) - ソース $($log.ProviderName)"
-        $unknownLogList.Add($log) | Out-Null
+        $unknownLogList.Add($log) > $null
+        # カウント追加
+        $unknownLogCountList.Add($log.Id) > $null
     }
     elseif ($log.Id -in $unknownLogList.Id -and $log.ProviderName -in $unknownLogList.ProviderName) {
         # 登録済みのエラー
         # Write-Host "登録済みのエラー: イベントID $($log.Id) - ソース $($log.ProviderName)"
+        # カウント追加
+        $unknownLogCountList.Add($log.Id) > $null
     }
     # elseif ($log.Id -in $csvData.Id -and $log.ProviderName -in $csvData.ProviderName) {
     #     # 既知のエラー
@@ -80,6 +86,11 @@ if ($unknownLogList.Count -gt 0) {
 Write-Host "イベントログ取得件数: $($eventCount)"
 Write-Host "エラーログ件数: $($eventLogs.Count)"
 Write-Host "未知のエラーログ件数: $($unknownLogList.Count)"
+# 未知のエラーログIDごとに集計し表示
+$unknownLogCountList | Group-Object | Sort-Object -Property Count -Descending | ForEach-Object {
+    Write-Host "未知のエラーログID: $($_.Name) - 件数: $($_.Count)"
+}
+# Write-Host "未知のエラーログID件数: $($unknownLogCountList.Count)"
 
 # トランスクリプト終了
 Stop-Transcript
