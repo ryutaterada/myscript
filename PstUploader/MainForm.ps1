@@ -2,7 +2,7 @@ Add-Type -AssemblyName System.Windows.Forms
 
 # 変数
 $width = 600
-$height = 600
+$height = 800
 # $widthColumn = 10
 $heightColumn = 10
 
@@ -59,24 +59,92 @@ $descriptionLabel.Location = New-Object System.Drawing.Point(10, $heightColumn)
 $descriptionLabel.AutoSize = $true
 $form.Controls.Add($descriptionLabel)
 
-# メールアドレス入力欄
+# メールアドレス入力欄1
 $heightColumn += 25
-$emailLabel = New-Object System.Windows.Forms.Label
-$emailLabel.Text = "メールアドレス:"
-$emailLabel.Location = New-Object System.Drawing.Point(10, $heightColumn)
-$form.Controls.Add($emailLabel)
+$emailLabel1 = New-Object System.Windows.Forms.Label
+$emailLabel1.Text = "メールアドレス："
+$emailLabel1.Location = New-Object System.Drawing.Point(10, $heightColumn)
+$form.Controls.Add($emailLabel1)
 
-$emailTextBox = New-Object System.Windows.Forms.TextBox
-$emailTextBox.Location = New-Object System.Drawing.Point(120, $heightColumn)
-$emailTextBox.Text = "test@example.com" # Set initial value
-# $emailTextBox.Text = Get-OutlookEmailAddress # Set initial value
-$emailTextBox.Width = 390 # Set the width of the text box
-$form.Controls.Add($emailTextBox)
+$emailTextBox1 = New-Object System.Windows.Forms.TextBox
+$emailTextBox1.Location = New-Object System.Drawing.Point(120, $heightColumn)
+$emailTextBox1.Text = "test@example.com" # Set initial value
+$emailTextBox1.Width = 390 # Set the width of the text box
+$emailTextBox1.Enabled = $false # Make the text box read-only by default
+$form.Controls.Add($emailTextBox1)
+
+# メールアドレス入力欄2
+$heightColumn += 25
+$emailLabel2 = New-Object System.Windows.Forms.Label
+$emailLabel2.Text = "メールアドレス："
+$emailLabel2.Location = New-Object System.Drawing.Point(10, $heightColumn)
+$form.Controls.Add($emailLabel2)
+
+$emailTextBox2 = New-Object System.Windows.Forms.TextBox
+$emailTextBox2.Location = New-Object System.Drawing.Point(120, $heightColumn)
+$emailTextBox2.Text = "test@example.com" # Set initial value
+$emailTextBox2.Width = 390 # Set the width of the text box
+$emailTextBox2.Enabled = $false # Make the text box read-only by default
+$form.Controls.Add($emailTextBox2)
+
+# チェックボックス
+$heightColumn += 25
+$checkBoxLabel = New-Object System.Windows.Forms.Label
+$checkBoxLabel.Text = "メールアドレス編集ボタン："
+$checkBoxLabel.Location = New-Object System.Drawing.Point(10, $heightColumn)
+$checkBoxLabel.Width = 140 # Set the width of the label
+$form.Controls.Add($checkBoxLabel)
+
+$checkBox = New-Object System.Windows.Forms.CheckBox
+$checkBox.Location = New-Object System.Drawing.Point(150, $heightColumn)
+$form.Controls.Add($checkBox)
+
+# チェックボックスのイベントハンドラ
+$checkBox.Add_CheckedChanged({
+        if ($checkBox.Checked) {
+            $emailTextBox1.Enabled = $true
+            $emailTextBox2.Enabled = $true
+        }
+        else {
+            $emailTextBox1.Enabled = $false
+            $emailTextBox2.Enabled = $false
+        }
+    })
+
+# 警告ラベル
+$heightColumn += 25
+$warningLabel = New-Object System.Windows.Forms.Label
+$warningLabel.Text = "エラー：メールアドレスが一致しません"
+$warningLabel.Location = New-Object System.Drawing.Point(10, $heightColumn)
+$warningLabel.AutoSize = $true
+$warningLabel.ForeColor = [System.Drawing.Color]::Red
+$warningLabel.Visible = $false
+$form.Controls.Add($warningLabel)
+
+# メールアドレスの一致チェックのイベントハンドラ
+$emailTextBox1.Add_TextChanged({
+        if ($emailTextBox1.Text -ne $emailTextBox2.Text) {
+            $warningLabel.Visible = $true
+        }
+        else {
+            $warningLabel.Visible = $false
+        }
+    })
+
+$emailTextBox2.Add_TextChanged({
+        if ($emailTextBox1.Text -ne $emailTextBox2.Text) {
+            $warningLabel.Visible = $true
+        }
+        else {
+            $warningLabel.Visible = $false
+        }
+    })
+
 
 # 説明文章を追加
 $heightColumn += 40
 $descriptionLabel = New-Object System.Windows.Forms.Label
-$descriptionLabel.Text = "②「確認」を押すとアップロード済みのPSTファイルを確認できます。"
+$descriptionLabel.Text = "②「確認」を押すとアップロード済みのPSTファイルおよびPC内のPSTファイルを確認できます。"
 $descriptionLabel.Location = New-Object System.Drawing.Point(10, $heightColumn)
 $descriptionLabel.AutoSize = $true
 $form.Controls.Add($descriptionLabel)
