@@ -47,6 +47,57 @@ function Get-PstFile {
     }
 }
 
+# PSTアップロード関数を追加
+function Invoke-PstFileUpload {
+    param (
+        [System.Windows.Forms.ListView+ListViewItemCollection]$ItemList
+    )
+    Write-Host "PSTファイルをアップロードします。"
+
+    # メールアドレス分解
+    $mail = "test01@example.com"
+    $address = $mail.Split("@")[0]
+    # ネットワーク帯域制御確認
+    # ファイルを読み込む処理を追加
+    $azCopyPath = "E:\work\ps\azcopy\azcopy.exe"
+    $sourcePath = "E:\work\ps\azcopy\folder\User02\UserList.csv"
+    $destinationPath = "Manage/Network/UserList.csv"
+    $SASURL = "https://azcopyttest1481.blob.core.windows.net/migrationwiz/$($destinationPath)?sp=racwl&st=2024-03-10T14:04:32Z&se=2024-11-12T22:04:32Z&spr=https&sv=2022-11-02&sr=c&sig=Ld7Nbm9bhwMDRhbGUsGTWhb1BBi%2Fe0h9ydXQSm6eCL4%3D"
+    Start-Process -FilePath $azCopyPath -ArgumentList "copy `"$SASURL`" `"$sourcePath`" " -NoNewWindow -Wait
+    $sourcePath = "E:\work\ps\azcopy\folder\User02\TrafficControl.csv"
+    $destinationPath = "Manage/Network/TrafficControl.csv"
+    $SASURL = "https://azcopyttest1481.blob.core.windows.net/migrationwiz/$($destinationPath)?sp=racwl&st=2024-03-10T14:04:32Z&se=2024-11-12T22:04:32Z&spr=https&sv=2022-11-02&sr=c&sig=Ld7Nbm9bhwMDRhbGUsGTWhb1BBi%2Fe0h9ydXQSm6eCL4%3D"
+    Start-Process -FilePath $azCopyPath -ArgumentList "copy `"$SASURL`" `"$sourcePath`" " -NoNewWindow -Wait
+
+    # ユーザーリストと帯域制限リストを取得
+    $userList = Import-Csv -Path "E:\work\ps\azcopy\folder\User02\UserList.csv" -Encoding UTF8
+    $trafficControlList = Import-Csv -Path "E:\work\ps\azcopy\folder\User02\TrafficControl.csv" -Encoding UTF8
+
+    # ユーザーリストと帯域制限リストを結合
+    $group = $userList | Where-Object { $_.Mail -eq $mail }
+    $bpsRate = $trafficControlList | Where-Object { $_.Group -eq $group.Group }
+    if ($bpsRate -ne 0) {
+        $NetQoSPolicyName = "AzCopyPolicy01"
+        $DSCPAction = 1
+        New-NetQosPolicy -Name $NetQoSPolicyName -AppPathNameMatchCondition "E:\work\ps\azcopy\azcopy.exe" -DSCPAction $DSCPAction -ThrottleRateActionBitsPerSecond $bpsRate -Precedence 0
+    }
+
+    foreach ($item in $ItemList) {
+        $filePath = $item.SubItems[2].Text
+        $filePath = "E:\work\ps\azcopy\folder\User01\TestPST.pst"
+        $destinationPath = "$($address)/00_UserUpload/" # Replace with your desired destination path
+        $SASURL = "https://azcopyttest1481.blob.core.windows.net/migrationwiz/$($destinationPath)?sp=racwl&st=2024-03-10T14:04:32Z&se=2024-11-12T22:04:32Z&spr=https&sv=2022-11-02&sr=c&sig=Ld7Nbm9bhwMDRhbGUsGTWhb1BBi%2Fe0h9ydXQSm6eCL4%3D"
+        Start-Process -FilePath "E:\work\ps\azcopy\azcopy" -ArgumentList "copy `"$filePath`" `"$SASURL`"" -NoNewWindow -Wait
+    }
+
+    # 作業ファイルおよび設定削除
+    Remove-Item -Path "E:\work\ps\azcopy\folder\User02\UserList.csv" -Force
+    Remove-Item -Path "E:\work\ps\azcopy\folder\User02\TrafficControl.csv" -Force
+    if ($bpsRate -ne 0) {
+        Remove-NetQosPolicy -Name $NetQoSPolicyName -Confirm:$false
+    }
+}
+
 # フォームを作成
 $form = New-Object System.Windows.Forms.Form
 $form.Text = "新PC移行用PSTアップロード"
@@ -211,7 +262,7 @@ $form.Controls.Add($uploadButton)
 $uploadButton.Add_Click({
         # 関数を呼び出す処理を追加
         Write-Host "アップロードボタンがクリックされました。"
-        # Get-PstFile
+        Invoke-PstFileUpload -ItemList $listView.Items
     })
 
 # 説明文章を追加
