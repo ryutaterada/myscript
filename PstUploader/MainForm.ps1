@@ -1,10 +1,12 @@
 Add-Type -AssemblyName System.Windows.Forms
 
 # 変数
+$rootPath = "E:\work\ps\azcopy"
 $width = 600
 $height = 800
-# $widthColumn = 10
-$heightColumn = 10
+$azCopyPath = "$($rootPath)\azcopy.exe"
+$StorageAccountName = "azcopyttest1481"
+$SASKey = "sp=racwl&st=2024-03-10T14:04:32Z&se=2024-11-12T22:04:32Z&spr=https&sv=2022-11-02&sr=c&sig=Ld7Nbm9bhwMDRhbGUsGTWhb1BBi%2Fe0h9ydXQSm6eCL4%3D"
 
 # メールアドレス取得関数を追加
 function Get-OutlookEmailAddress {
@@ -20,6 +22,18 @@ function Get-OutlookEmailAddress {
     return $emailAddresses
 }
 
+# BlobStorageからアップロード済みのファイルを収録する関数
+function Get-UploadedPstFile {
+    # azcopy listコマンドを実行してアップロード済みのPSTファイルを取得
+
+    $destinationPath = "00_User/$($group.Group)/$($address)/00_UserUpload/"
+    $SASURL = "https://$($StorageAccountName).blob.core.windows.net/migrationwiz/$($destinationPath)?$($SASKey)"
+    $azCopyPath = "$($rootPath)\azcopy.exe"
+    $localPath = "$($rootPath)\temp\UploadedPstFile.csv"
+    Start-Process -FilePath $azCopyPath -ArgumentList "copy `"$SASURL`" `"$localPath`" " -NoNewWindow -Wait
+    $uploadedPstFile = Import-Csv -Path $localPath -Encoding UTF8
+    return $uploadedPstFile
+}
 
 # PSTファイル取得関数を追加
 function Get-PstFile {
@@ -29,21 +43,35 @@ function Get-PstFile {
     $openFileDialog = New-Object System.Windows.Forms.OpenFileDialog
     $openFileDialog.Title = "ファイルを選択"
     $openFileDialog.Filter = "PSTファイル (*.pst)|*.pst"
-    $openFileDialog.InitialDirectory = [Environment]::GetFolderPath("Documents")
-    $openFileDialog.MaxFileSize = 25 * 1024 * 1024 * 1024 # 25GB
+    $openFileDialog.InitialDirectory = [Environment]::GetFolderPath("MyDocuments")
 
     if ($openFileDialog.ShowDialog() -eq 'OK') {
-        $selectedFile = $openFileDialog.FileName
-        Write-Host "選択されたファイル: $selectedFile"
+        # $selectedFile = $openFileDialog.FileName
+        Write-Host "$(Get-Date -Format "yyyy/MM/dd HH:mm:ss") - 選択されたファイル: $($openFileDialog.FileName)"
+
+        if ($openFileDialog.FileName -notlike "*.pst") {
+            # PSTファイル以外が選択された場合。新規ファイル作成などの操作により実行可能。
+            $str = "PSTファイル以外が選択されました。メールが保存されているPSTファイルを選択してください。"
+            Write-Host "$(Get-Date -Format "yyyy/MM/dd HH:mm:ss") - $($str)"
+            Set-ErrorMessage -Message $str
+            return
+        }
 
         # ファイル情報を取得
-        $fileInfo = Get-Item $selectedFile
+        $fileInfo = Get-Item $openFileDialog.FileName
 
         # ファイル名、ファイル容量、ファイルパスを追加
         $listViewItem = New-Object System.Windows.Forms.ListViewItem($fileInfo.Name)
         $listViewItem.SubItems.Add($fileInfo.Length)
         $listViewItem.SubItems.Add($fileInfo.FullName)
         $listView.Items.Add($listViewItem)
+    }
+    else {
+        # ファイル選択画面を閉じた場合
+        $str = "「ファイル選択ボタン」が押されましたが、ファイルが選択されませんでした。"
+        Write-Host "$(Get-Date -Format "yyyy/MM/dd HH:mm:ss") - $($str)"
+        Set-ErrorMessage -Message $str
+        return
     }
 }
 
@@ -55,47 +83,66 @@ function Invoke-PstFileUpload {
     Write-Host "PSTファイルをアップロードします。"
 
     # メールアドレス分解
-    $mail = "test01@example.com"
-    $address = $mail.Split("@")[0]
-    # ネットワーク帯域制御確認
-    # ファイルを読み込む処理を追加
-    $azCopyPath = "E:\work\ps\azcopy\azcopy.exe"
-    $sourcePath = "E:\work\ps\azcopy\folder\User02\UserList.csv"
-    $destinationPath = "Manage/Network/UserList.csv"
-    $SASURL = "https://azcopyttest1481.blob.core.windows.net/migrationwiz/$($destinationPath)?sp=racwl&st=2024-03-10T14:04:32Z&se=2024-11-12T22:04:32Z&spr=https&sv=2022-11-02&sr=c&sig=Ld7Nbm9bhwMDRhbGUsGTWhb1BBi%2Fe0h9ydXQSm6eCL4%3D"
-    Start-Process -FilePath $azCopyPath -ArgumentList "copy `"$SASURL`" `"$sourcePath`" " -NoNewWindow -Wait
-    $sourcePath = "E:\work\ps\azcopy\folder\User02\TrafficControl.csv"
-    $destinationPath = "Manage/Network/TrafficControl.csv"
-    $SASURL = "https://azcopyttest1481.blob.core.windows.net/migrationwiz/$($destinationPath)?sp=racwl&st=2024-03-10T14:04:32Z&se=2024-11-12T22:04:32Z&spr=https&sv=2022-11-02&sr=c&sig=Ld7Nbm9bhwMDRhbGUsGTWhb1BBi%2Fe0h9ydXQSm6eCL4%3D"
-    Start-Process -FilePath $azCopyPath -ArgumentList "copy `"$SASURL`" `"$sourcePath`" " -NoNewWindow -Wait
+    $address = ($emailTextBox1.Text).Split("@")[0]
+    Write-Host $address
 
-    # ユーザーリストと帯域制限リストを取得
-    $userList = Import-Csv -Path "E:\work\ps\azcopy\folder\User02\UserList.csv" -Encoding UTF8
-    $trafficControlList = Import-Csv -Path "E:\work\ps\azcopy\folder\User02\TrafficControl.csv" -Encoding UTF8
+    # ユーザーリスト読み込み
+    $userListLocalPath = "$($rootPath)\temp\UserList.csv"
+    $userListBlobPath = "01_Manage/00_Group/UserList.csv"
+    $SASURL = "https://$($StorageAccountName).blob.core.windows.net/migrationwiz/$($userListBlobPath)?$($SASKey)"
+    Start-Process -FilePath $azCopyPath -ArgumentList "copy `"$SASURL`" `"$userListLocalPath`" " -NoNewWindow -Wait
+    $userList = Import-Csv -Path $userListLocalPath -Encoding UTF8
+
+    # 帯域制限リスト読み込み
+    $trafficListLocalPath = "$($rootPath)\temp\TrafficControl.csv"
+    $trafficListBlobPath = "01_Manage/00_Group/TrafficControl.csv"
+    $SASURL = "https://$($StorageAccountName).blob.core.windows.net/migrationwiz/$($trafficListBlobPath)?$($SASKey)"
+    Start-Process -FilePath $azCopyPath -ArgumentList "copy `"$SASURL`" `"$trafficListLocalPath`" " -NoNewWindow -Wait
+    $trafficControlList = Import-Csv -Path $trafficListLocalPath -Encoding UTF8
 
     # ユーザーリストと帯域制限リストを結合
-    $group = $userList | Where-Object { $_.Mail -eq $mail }
+    $group = $userList | Where-Object { $_.Mail -eq $($emailTextBox1.Text) }
     $bpsRate = $trafficControlList | Where-Object { $_.Group -eq $group.Group }
-    if ($bpsRate -ne 0) {
+    if ($bpsRate.Speed -ne 0) {
         $NetQoSPolicyName = "AzCopyPolicy01"
         $DSCPAction = 1
-        New-NetQosPolicy -Name $NetQoSPolicyName -AppPathNameMatchCondition "E:\work\ps\azcopy\azcopy.exe" -DSCPAction $DSCPAction -ThrottleRateActionBitsPerSecond $bpsRate -Precedence 0
+        New-NetQosPolicy -Name $NetQoSPolicyName -AppPathNameMatchCondition $azCopyPath -DSCPAction $DSCPAction -ThrottleRateActionBitsPerSecond $bpsRate -Precedence 0
     }
 
+    # ファイルアップロード処理
     foreach ($item in $ItemList) {
         $filePath = $item.SubItems[2].Text
-        $filePath = "E:\work\ps\azcopy\folder\User01\TestPST.pst"
-        $destinationPath = "$($address)/00_UserUpload/" # Replace with your desired destination path
-        $SASURL = "https://azcopyttest1481.blob.core.windows.net/migrationwiz/$($destinationPath)?sp=racwl&st=2024-03-10T14:04:32Z&se=2024-11-12T22:04:32Z&spr=https&sv=2022-11-02&sr=c&sig=Ld7Nbm9bhwMDRhbGUsGTWhb1BBi%2Fe0h9ydXQSm6eCL4%3D"
-        Start-Process -FilePath "E:\work\ps\azcopy\azcopy" -ArgumentList "copy `"$filePath`" `"$SASURL`"" -NoNewWindow -Wait
+        $destinationPath = "00_User/$($group.Group)/$($address)/00_UserUpload/"
+        $SASURL = "https://$($StorageAccountName).blob.core.windows.net/migrationwiz/$($destinationPath)?$($SASKey)"
+        Start-Process -FilePath $azCopyPath -ArgumentList "copy `"$filePath`" `"$SASURL`"" -Wait
     }
 
     # 作業ファイルおよび設定削除
-    Remove-Item -Path "E:\work\ps\azcopy\folder\User02\UserList.csv" -Force
-    Remove-Item -Path "E:\work\ps\azcopy\folder\User02\TrafficControl.csv" -Force
-    if ($bpsRate -ne 0) {
+    Remove-Item -Path $userListLocalPath -Force
+    Remove-Item -Path $trafficListLocalPath -Force
+    if ($bpsRate.Speed -ne 0) {
         Remove-NetQosPolicy -Name $NetQoSPolicyName -Confirm:$false
     }
+}
+
+# メールアドレス一致チェック関数を追加
+function Test-EmailAddress {
+    # メールアドレスが一致しているかどうかを確認
+    if ($emailTextBox1.Text -ne $emailTextBox2.Text) {
+        Write-Host "メールアドレスが一致していません。処理をスキップします。"
+        # エラーメッセージを表示
+        Set-ErrorMessage -Message "メールアドレスが一致していません。メールアドレス入力欄を修正してください。"
+        return $false
+    }
+    return $true
+}
+
+# エラーメッセージの設定
+function Set-ErrorMessage {
+    param (
+        [string]$Message
+    )
+    $errorLabel.Text = $Message
 }
 
 # フォームを作成
@@ -104,6 +151,7 @@ $form.Text = "新PC移行用PSTアップロード"
 $form.Size = New-Object System.Drawing.Size($width, $height)
 
 # 説明文章を追加
+$heightColumn = 10
 $descriptionLabel = New-Object System.Windows.Forms.Label
 $descriptionLabel.Text = "①移行を希望するメールアドレスを入力してください。"
 $descriptionLabel.Location = New-Object System.Drawing.Point(10, $heightColumn)
@@ -115,10 +163,11 @@ $heightColumn += 25
 $emailLabel1 = New-Object System.Windows.Forms.Label
 $emailLabel1.Text = "メールアドレス："
 $emailLabel1.Location = New-Object System.Drawing.Point(10, $heightColumn)
+$emailLabel2.AutoSize = $true
 $form.Controls.Add($emailLabel1)
 
 $emailTextBox1 = New-Object System.Windows.Forms.TextBox
-$emailTextBox1.Location = New-Object System.Drawing.Point(120, $heightColumn)
+$emailTextBox1.Location = New-Object System.Drawing.Point(140, $heightColumn)
 $emailTextBox1.Text = "test@example.com" # Set initial value
 $emailTextBox1.Width = 390 # Set the width of the text box
 $emailTextBox1.Enabled = $false # Make the text box read-only by default
@@ -127,12 +176,13 @@ $form.Controls.Add($emailTextBox1)
 # メールアドレス入力欄2
 $heightColumn += 25
 $emailLabel2 = New-Object System.Windows.Forms.Label
-$emailLabel2.Text = "メールアドレス："
+$emailLabel2.Text = "メールアドレス(確認用)："
 $emailLabel2.Location = New-Object System.Drawing.Point(10, $heightColumn)
+$emailLabel2.AutoSize = $true
 $form.Controls.Add($emailLabel2)
 
 $emailTextBox2 = New-Object System.Windows.Forms.TextBox
-$emailTextBox2.Location = New-Object System.Drawing.Point(120, $heightColumn)
+$emailTextBox2.Location = New-Object System.Drawing.Point(140, $heightColumn)
 $emailTextBox2.Text = "test@example.com" # Set initial value
 $emailTextBox2.Width = 390 # Set the width of the text box
 $emailTextBox2.Enabled = $false # Make the text box read-only by default
@@ -208,8 +258,11 @@ $confirmButton.Location = New-Object System.Drawing.Point(10, $heightColumn)
 $form.Controls.Add($confirmButton)
 # ボタンがクリックされたときの処理
 $confirmButton.Add_Click({
-        # 関数を呼び出す処理を追加
-        Write-Host "確認ボタンがクリックされました。"
+        # メールアドレスが一致しているかどうかを確認
+        if (Test-EmailAddress -eq $true) {
+            # 関数を呼び出す処理を追加
+            Write-Host "確認ボタンがクリックされました。"
+        }
     })
 
 # 説明文章を追加
@@ -220,17 +273,20 @@ $descriptionLabel.Location = New-Object System.Drawing.Point(10, $heightColumn)
 $descriptionLabel.AutoSize = $true
 $form.Controls.Add($descriptionLabel)
 
-# PST選択ボタン
+# ファイル選択ボタン
 $heightColumn += 40
 $pstButton = New-Object System.Windows.Forms.Button
-$pstButton.Text = "PST選択"
+$pstButton.Text = "ファイル選択"
 $pstButton.Location = New-Object System.Drawing.Point(10, $heightColumn)
 $form.Controls.Add($pstButton)
 # ボタンがクリックされたときの処理
 $pstButton.Add_Click({
-        # 関数を呼び出す処理を追加
-        Write-Host "PST選択ボタンがクリックされました。"
-        Get-PstFile
+        # メールアドレスが一致しているかどうかを確認
+        if (Test-EmailAddress -eq $true) {
+            # 関数を呼び出す処理を追加
+            Write-Host "PST選択ボタンがクリックされました。"
+            Get-PstFile
+        }
     })
 
 # １０行のリスト
@@ -260,31 +316,30 @@ $uploadButton.Location = New-Object System.Drawing.Point(10, $heightColumn)
 $form.Controls.Add($uploadButton)
 # ボタンがクリックされたときの処理
 $uploadButton.Add_Click({
-        # 関数を呼び出す処理を追加
-        Write-Host "アップロードボタンがクリックされました。"
-        Invoke-PstFileUpload -ItemList $listView.Items
+        # メールアドレスが一致しているかどうかを確認
+        if (Test-EmailAddress -eq $true) {
+            # 関数を呼び出す処理を追加
+            Write-Host "アップロードボタンがクリックされました。"
+            Invoke-PstFileUpload -ItemList $listView.Items
+        }
     })
 
 # 説明文章を追加
 $heightColumn += 40
 $descriptionLabel = New-Object System.Windows.Forms.Label
-$descriptionLabel.Text = "⑤「移行」を押すと移行するPSTファイルを確定することができます。"
+$descriptionLabel.Text = "○メッセージ表示欄"
 $descriptionLabel.Location = New-Object System.Drawing.Point(10, $heightColumn)
 $descriptionLabel.AutoSize = $true
 $form.Controls.Add($descriptionLabel)
 
-# 移行ボタン
+# エラーメッセージを表示
 $heightColumn += 25
-$migrationButton = New-Object System.Windows.Forms.Button
-$migrationButton.Text = "移行"
-$migrationButton.Location = New-Object System.Drawing.Point(10, $heightColumn)
-$form.Controls.Add($migrationButton)
-# ボタンがクリックされたときの処理
-$migrationButton.Add_Click({
-        # 関数を呼び出す処理を追加
-        Write-Host "移行ボタンがクリックされました。"
-        # Get-PstFile
-    })
+$errorLabel = New-Object System.Windows.Forms.Label
+$errorLabel.Text = ""
+$errorLabel.Location = New-Object System.Drawing.Point(10, $heightColumn)
+$errorLabel.AutoSize = $true
+$errorLabel.ForeColor = [System.Drawing.Color]::Red
+$form.Controls.Add($errorLabel)
 
 # フォームを表示
 $form.ShowDialog()
