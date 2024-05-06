@@ -6,7 +6,7 @@ $width = 600
 $height = 800
 $azCopyPath = "$($rootPath)\azcopy.exe"
 $StorageAccountName = "azcopyttest1481"
-$SASKey = "sp=racwl&st=2024-03-10T14:04:32Z&se=2024-11-12T22:04:32Z&spr=https&sv=2022-11-02&sr=c&sig=Ld7Nbm9bhwMDRhbGUsGTWhb1BBi%2Fe0h9ydXQSm6eCL4%3D"
+$SASKey = ""
 
 # メールアドレス取得関数を追加
 function Get-OutlookEmailAddress {
@@ -24,14 +24,50 @@ function Get-OutlookEmailAddress {
 
 # BlobStorageからアップロード済みのファイルを収録する関数
 function Get-UploadedPstFile {
-    # azcopy listコマンドを実行してアップロード済みのPSTファイルを取得
+    # ローカルのPSTファイルを取得
 
+    # ローカルのPSTファイルアップロードログを取得
+
+    # azcopy listコマンドを実行してアップロード済みのPSTファイルを取得
     $destinationPath = "00_User/$($group.Group)/$($address)/00_UserUpload/"
     $SASURL = "https://$($StorageAccountName).blob.core.windows.net/migrationwiz/$($destinationPath)?$($SASKey)"
-    $azCopyPath = "$($rootPath)\azcopy.exe"
-    $localPath = "$($rootPath)\temp\UploadedPstFile.csv"
-    Start-Process -FilePath $azCopyPath -ArgumentList "copy `"$SASURL`" `"$localPath`" " -NoNewWindow -Wait
-    $uploadedPstFile = Import-Csv -Path $localPath -Encoding UTF8
+    $outputFilePath = "$($rootPath)\temp\output.txt"
+    Start-Process -FilePath $azCopyPath -ArgumentList "list `"$SASURL`" --running-tally --machine-readable" -NoNewWindow -Wait -RedirectStandardOutput $outputFilePath
+    $output = Get-Content -Path $outputFilePath
+    $uploadPstFile = [System.Collections.ArrayList]@()
+    for ($i = 0; $i -lt $output.Count - 3; $i++) {
+        # ファイル情報を取得
+        $UploadDate = $output[$i].Split(":")[1].Split("/")[0].Substring(1)
+        $UploadFileName = $output[$i].Split(":")[1].Substring(16, $output[$i].Split(":")[1].LastIndexOf(";") - 16)
+
+        # 時間の修正
+        $UploadDate = ([DateTime]::ParseExact($UploadDate, "yyyyMMddHHmmss", $null)).ToString("yyyy/MM/dd HH:mm:ss")
+
+        # 情報の突合
+
+        # ファイル情報を追加
+        $uploadPstFile.Add([PSCustomObject]@{
+                アップロード日時 = $UploadDate
+                ファイル名    = $UploadFileName
+            })
+    }
+
+    # テキストとして表示
+    # テキストとして表示
+    $uploadPstFile | Out-File -FilePath "C:\path\to\output.txt"
+    Invoke-Item -Path "C:\path\to\output.txt"
+
+    $output[$output.Count - 2] # INFO: File count: 2
+    $output[$output.Count - 1] # INFO: Total file size: 175
+    $maxTotalPstFileSize = 90000000000
+    if ([Int64]$output[$output.Count - 1].Split(":")[2].Substring(1) -gt $maxTotalPstFileSize) {
+        $str = "アップロード可能なファイルサイズを超えています。\nアップロード済みのファイルを削除するために、移行担当者に連絡してください。\n連絡先 : test@example.com"
+        Write-Host "$(Get-Date -Format "yyyy/MM/dd HH:mm:ss") - $($str)"
+        Set-ErrorMessage -Message $str
+        # return
+    }
+    Remove-Item -Path $outputFilePath -Force
+
     return $uploadedPstFile
 }
 
@@ -112,7 +148,9 @@ function Invoke-PstFileUpload {
     # ファイルアップロード処理
     foreach ($item in $ItemList) {
         $filePath = $item.SubItems[2].Text
-        $destinationPath = "00_User/$($group.Group)/$($address)/00_UserUpload/"
+        $time = Get-Date -Format "yyyyMMddHHmmss"
+        Start-Sleep -Seconds 1
+        $destinationPath = "00_User/$($group.Group)/$($address)/00_UserUpload/$($time)/"
         $SASURL = "https://$($StorageAccountName).blob.core.windows.net/migrationwiz/$($destinationPath)?$($SASKey)"
         Start-Process -FilePath $azCopyPath -ArgumentList "copy `"$filePath`" `"$SASURL`"" -Wait
     }
@@ -143,6 +181,20 @@ function Set-ErrorMessage {
         [string]$Message
     )
     $errorLabel.Text = $Message
+}
+
+function Test-OutlookRunning {
+    # Get-ProcessコマンドレットでOutlookのプロセスを取得
+    $outlookProcess = Get-Process -Name "OUTLOOK" -ErrorAction SilentlyContinue
+    if ($true) {
+        # if ($outlookProcess) {
+        $result = [System.Windows.Forms.MessageBox]::Show("Outlookプロセスが実行中です。強制終了しますか？", "警告", [System.Windows.Forms.MessageBoxButtons]::OKCancel, [System.Windows.Forms.MessageBoxIcon]::Warning)
+        if ($result -eq [System.Windows.Forms.DialogResult]::OK) {
+            $outlookProcess | ForEach-Object { $_.Kill() }
+        }
+    }
+    # プロセスが存在する場合は$trueを、存在しない場合は$falseを返す
+    return ($null -ne $outlookProcess)
 }
 
 # フォームを作成
