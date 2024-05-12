@@ -1,14 +1,30 @@
 Add-Type -AssemblyName System.Windows.Forms
 
-# å¤‰æ•°
+# •Ï”
 $rootPath = "E:\work\ps\azcopy"
 $width = 600
 $height = 800
 $azCopyPath = "$($rootPath)\azcopy.exe"
 $StorageAccountName = "azcopyttest1481"
-$SASKey = ""
+$SASKey = "sp=racwl&st=2024-03-10T14:04:32Z&se=2024-11-12T22:04:32Z&spr=https&sv=2022-11-02&sr=c&sig=Ld7Nbm9bhwMDRhbGUsGTWhb1BBi%2Fe0h9ydXQSm6eCL4%3D"
 
-# ãƒ¡ãƒ¼ãƒ«ã‚¢ãƒ‰ãƒ¬ã‚¹å–å¾—é–¢æ•°ã‚’è¿½åŠ 
+# ƒAƒbƒvƒ[ƒhƒƒO‚Ì•Û‘¶
+$uploadedPstLogFilePath = "$($rootPath)\Log\UploadedPstLog.csv"
+$blobPstFilePath = "$($rootPath)\Output\BlobPstFileList.txt"
+
+# ƒtƒHƒ‹ƒ_ì¬ˆ—
+$worFolderList = ("$($rootPath)\temp", "$($rootPath)\Log", "$($rootPath)\Output")
+foreach ($workFolderPath in $worFolderList) {
+    if (-Not (Test-Path -Path $workFolderPath)) {
+        New-Item -ItemType Directory -Path $workFolderPath > $null
+    }
+}
+
+# Transcriptæ“¾
+$transcriptPath = "$($rootPath)\Log\Transcript_$(Get-Date -Format "yyyyMMddHHmmss").txt"
+Start-Transcript -Path $transcriptPath
+
+# ƒ[ƒ‹ƒAƒhƒŒƒXæ“¾ŠÖ”‚ğ’Ç‰Á
 function Get-OutlookEmailAddress {
     Add-Type -AssemblyName "Microsoft.Office.Interop.Outlook"
     $outlook = New-Object -ComObject "Outlook.Application"
@@ -22,160 +38,312 @@ function Get-OutlookEmailAddress {
     return $emailAddresses
 }
 
-# BlobStorageã‹ã‚‰ã‚¢ãƒƒãƒ—ãƒ­ãƒ¼ãƒ‰æ¸ˆã¿ã®ãƒ•ã‚¡ã‚¤ãƒ«ã‚’åéŒ²ã™ã‚‹é–¢æ•°
+# BlobStorage‚©‚çƒAƒbƒvƒ[ƒhÏ‚İ‚Ìƒtƒ@ƒCƒ‹‚ğû˜^‚·‚éŠÖ”
 function Get-UploadedPstFile {
-    # ãƒ­ãƒ¼ã‚«ãƒ«ã®PSTãƒ•ã‚¡ã‚¤ãƒ«ã‚’å–å¾—
+    # ƒ[ƒ‹ƒAƒhƒŒƒX•ª‰ğ
+    $address = ($emailTextBox1.Text).Split("@")[0]
+    # Write-Host $address
 
-    # ãƒ­ãƒ¼ã‚«ãƒ«ã®PSTãƒ•ã‚¡ã‚¤ãƒ«ã‚¢ãƒƒãƒ—ãƒ­ãƒ¼ãƒ‰ãƒ­ã‚°ã‚’å–å¾—
+    # ƒ†[ƒU[ƒŠƒXƒg“Ç‚İ‚İ
+    $userListLocalPath = "$($rootPath)\temp\UserList.csv"
+    $userListBlobPath = "01_Manage/00_Group/UserList.csv"
+    $SASURL = "https://$($StorageAccountName).blob.core.windows.net/migrationwiz/$($userListBlobPath)?$($SASKey)"
+    Start-Process -FilePath $azCopyPath -ArgumentList "copy `"$SASURL`" `"$userListLocalPath`" " -NoNewWindow -Wait
+    $userList = Import-Csv -Path $userListLocalPath -Encoding UTF8
+    $group = $userList | Where-Object { $_.Mail -eq $($emailTextBox1.Text) }
 
-    # azcopy listã‚³ãƒãƒ³ãƒ‰ã‚’å®Ÿè¡Œã—ã¦ã‚¢ãƒƒãƒ—ãƒ­ãƒ¼ãƒ‰æ¸ˆã¿ã®PSTãƒ•ã‚¡ã‚¤ãƒ«ã‚’å–å¾—
-    $destinationPath = "00_User/$($group.Group)/$($address)/00_UserUpload/"
-    $SASURL = "https://$($StorageAccountName).blob.core.windows.net/migrationwiz/$($destinationPath)?$($SASKey)"
-    $outputFilePath = "$($rootPath)\temp\output.txt"
-    Start-Process -FilePath $azCopyPath -ArgumentList "list `"$SASURL`" --running-tally --machine-readable" -NoNewWindow -Wait -RedirectStandardOutput $outputFilePath
-    $output = Get-Content -Path $outputFilePath
-    $uploadPstFile = [System.Collections.ArrayList]@()
-    for ($i = 0; $i -lt $output.Count - 3; $i++) {
-        # ãƒ•ã‚¡ã‚¤ãƒ«æƒ…å ±ã‚’å–å¾—
-        $UploadDate = $output[$i].Split(":")[1].Split("/")[0].Substring(1)
-        $UploadFileName = $output[$i].Split(":")[1].Substring(16, $output[$i].Split(":")[1].LastIndexOf(";") - 16)
-
-        # æ™‚é–“ã®ä¿®æ­£
-        $UploadDate = ([DateTime]::ParseExact($UploadDate, "yyyyMMddHHmmss", $null)).ToString("yyyy/MM/dd HH:mm:ss")
-
-        # æƒ…å ±ã®çªåˆ
-
-        # ãƒ•ã‚¡ã‚¤ãƒ«æƒ…å ±ã‚’è¿½åŠ 
-        $uploadPstFile.Add([PSCustomObject]@{
-                ã‚¢ãƒƒãƒ—ãƒ­ãƒ¼ãƒ‰æ—¥æ™‚ = $UploadDate
-                ãƒ•ã‚¡ã‚¤ãƒ«å    = $UploadFileName
-            })
+    # Š‘®ƒOƒ‹[ƒv‚ª‘¶İ‚µ‚È‚¢ê‡
+    if ($null -eq $group.Group) {
+        Set-ErrorMessage -Message "‚ ‚È‚½‚Ìƒ[ƒ‹ƒAƒhƒŒƒX‚ªˆÚs‘ÎÛÒ‚Æ‚µ‚Ä“o˜^‚³‚ê‚Ä‚¢‚Ü‚¹‚ñB\nŠm”F‚Ì‚½‚ß‚ÉAˆÚs’S“–Ò‚Ö˜A—‚ğ‚¨Šè‚¢‚µ‚Ü‚·B\n˜A—æ : test@example.com"
     }
 
-    # ãƒ†ã‚­ã‚¹ãƒˆã¨ã—ã¦è¡¨ç¤º
-    # ãƒ†ã‚­ã‚¹ãƒˆã¨ã—ã¦è¡¨ç¤º
-    $uploadPstFile | Out-File -FilePath "C:\path\to\output.txt"
-    Invoke-Item -Path "C:\path\to\output.txt"
+    # ì‹Æƒtƒ@ƒCƒ‹‚¨‚æ‚Ñİ’èíœ
+    # Remove-Item -Path $userListLocalPath -Force
 
-    $output[$output.Count - 2] # INFO: File count: 2
-    $output[$output.Count - 1] # INFO: Total file size: 175
+    # ŒŸõ‘ÎÛƒtƒHƒ‹ƒ_‚ğw’è
+    $localFolders = @(
+        "E:\work\ps\azcopy"
+        # "C:\",
+        # "D:\"
+    )
+
+    # PSTƒJƒEƒ“ƒg•Ï”
+    $totalCount = 0
+    $totalSize = 0
+    $LocalPSTInfoList = [System.Collections.ArrayList]@()
+
+    # PSTƒtƒ@ƒCƒ‹‚ğŒŸõ
+    foreach ($localFolder in $localFolders) {
+        # ŒŸõˆ—
+        $localPSTFiles = Get-ChildItem -Path $localFolder -Filter "*.pst" -File -Recurse -ErrorAction SilentlyContinue
+
+        # ‚»‚ê‚¼‚ê‚ÌPSTƒtƒ@ƒCƒ‹‚Ìî•ñ‚ğæ“¾
+        foreach ($localPSTFile in $localPSTFiles) {
+            # ƒŠƒXƒg‚É’Ç‰Á
+            $LocalPSTInfoList.Add([PSCustomObject]@{
+                    Name     = $localPSTFile.Name
+                    FilePath = $localPSTFile.FullName
+                    Size     = $localPSTFile.Length
+                    Owner    = (Get-Acl -Path $localPSTFile.FullName).Owner
+                }) > $null
+
+            # ƒJƒEƒ“ƒg•Ï”‚ÌXV
+            $totalCount++
+            $totalSize += $size
+        }
+
+        Clear-Variable -Name localPSTFiles
+    }
+
+    # PSTƒf[ƒ^•Û‘¶ˆ—
+    $localPSTListPath = "$($rootPath)\PSTFileList.txt"
+    $LocalPSTList = @"
+$hostname
+$ipAddress
+$totalCount
+$totalSize
+"@
+    foreach ($LocalPSTInfo in $LocalPSTInfoList) {
+        $LocalPSTList += "$($LocalPSTInfo.Name) $($LocalPSTInfo.FolderPath) $($LocalPSTInfo.Size) $($LocalPSTInfo.Owner)`n"
+    }
+    $LocalPSTList | Out-File -FilePath $localPSTListPath -Encoding UTF8
+
+    # ƒ[ƒJƒ‹‚ÌPSTƒtƒ@ƒCƒ‹ƒAƒbƒvƒ[ƒhƒƒO‚ğæ“¾
+    # $uploadedPstLog = Import-Csv -Path $uploadedPstLogFilePath -Encoding UTF8
+
+    # azcopy listƒRƒ}ƒ“ƒh‚ğÀs‚µ‚ÄƒAƒbƒvƒ[ƒhÏ‚İ‚ÌPSTƒtƒ@ƒCƒ‹‚ğæ“¾
+    $destinationPath = "00_User/$($group.Group)/$($address)/00_UserUpload/"
+    $SASURL = "https://$($StorageAccountName).blob.core.windows.net/migrationwiz/$($destinationPath)?$($SASKey)"
+    $uploadedFileListPath = "$($rootPath)\temp\UploadedFileList.txt"
+    Start-Process -FilePath $azCopyPath -ArgumentList "list `"$SASURL`" --running-tally --machine-readable" -NoNewWindow -Wait -RedirectStandardOutput $uploadedFileListPath
+    $output = Get-Content -Path $uploadedFileListPath
+    $blobPstFile = [System.Collections.ArrayList]@()
+    for ($i = 0; $i -lt $output.Count - 3; $i++) {
+        # ƒtƒ@ƒCƒ‹î•ñ‚ğæ“¾
+        $blobUploadDate = $output[$i].Split(":")[1].Split("/")[0].Substring(1)
+        $blobUploadFileName = $output[$i].Split(":")[1].Substring(16, $output[$i].Split(":")[1].LastIndexOf(";") - 16)
+        $blobUploadFileSize = $output[$i].Split(":")[2].Substring(1)
+
+        # ŠÔ‚ÌC³
+        $blobUploadDate = ([DateTime]::ParseExact($blobUploadDate, "yyyyMMddHHmmss", $null)).ToString("yyyy/MM/dd HH:mm:ss")
+
+        # Blob‚Ìƒtƒ@ƒCƒ‹–¼‚Æƒ[ƒJƒ‹‚Ìƒtƒ@ƒCƒ‹–¼‚ğ”äŠr
+        $LocalPSTIndex = $LocalPSTInfoList.Name.IndexOf($blobUploadFileName)
+        # ƒAƒbƒvƒ[ƒhÏ‚İ‚©‚Ç‚¤‚©‚ğ”»’è
+        if (
+            $blobUploadFileName -in $LocalPSTInfoList.Name -and
+            $blobUploadFileSize -in $LocalPSTInfoList[$LocalPSTIndex].Size -and
+            $LocalPSTIndex -ne -1) {
+            $flag = "ƒNƒ‰ƒEƒh‚ÉƒAƒbƒvƒ[ƒhÏ‚İ"
+            $blobUploadFilePath = $LocalPSTInfoList[$LocalPSTIndex].FullName
+        }
+        elseif (
+            $blobUploadFileName -in $LocalPSTInfoList.Name -and
+            [Int64]$blobUploadFileSize -lt [Int64]$LocalPSTInfoList[$LocalPSTIndex].Size -and
+            $LocalPSTIndex -ne -1) {
+            $flag = "ƒNƒ‰ƒEƒh‚ÉƒAƒbƒvƒ[ƒhÏ‚İ&—e—Ê‘‰Á"
+            $blobUploadFilePath = $LocalPSTInfoList[$LocalPSTIndex].FullName
+        }
+        elseif (
+            $blobUploadFileName -in $LocalPSTInfoList.Name -and
+            [Int64]$blobUploadFileSize -gt [Int64]$LocalPSTInfoList[$LocalPSTIndex].Size -and
+            $LocalPSTIndex -ne -1) {
+            $flag = "ƒNƒ‰ƒEƒh‚ÉƒAƒbƒvƒ[ƒhÏ‚İ&—e—ÊŒ¸­(•Êƒtƒ@ƒCƒ‹‚Ü‚½‚ÍƒoƒbƒNƒAƒbƒvƒtƒ@ƒCƒ‹)"
+            $blobUploadFilePath = $LocalPSTInfoList[$LocalPSTIndex].FullName
+        }
+        else {
+            $flag = "ƒNƒ‰ƒEƒh‚ÉƒAƒbƒvƒ[ƒhÏ‚İ&PC“à‚Éƒtƒ@ƒCƒ‹‚ª‘¶İ‚µ‚È‚¢"
+            $blobUploadFilePath = "PC“à‚Éƒtƒ@ƒCƒ‹‚ª‘¶İ‚µ‚È‚¢"
+        }
+
+        # ƒtƒ@ƒCƒ‹ƒTƒCƒY‚ğ”’l‚É•ÏŠ·
+        # $blobUploadFileSize = [Int64]$blobUploadFileSize
+        # # ƒoƒCƒg’PˆÊ‚ğMB’PˆÊ‚É•ÏŠ·
+        # $blobUploadFileSizeMB = $blobUploadFileSize / 1024 / 1024
+        # ­”‘æ1ˆÊ‚Ü‚Å•\¦
+        # $blobUploadFileSizeMB = "{0:N1}" -f ([Int64]$blobUploadFileSize / 1024 / 1024)
+
+        # ƒtƒ@ƒCƒ‹î•ñ‚ğ’Ç‰Á
+        $blobPstFile.Add([PSCustomObject]@{
+                Address  = $address
+                ƒAƒbƒvƒ[ƒhÏ‚İ = $flag
+                Name     = $blobUploadFileName
+                FilePath = $blobUploadFilePath
+                Size     = "{0:N1}" -f ([Int64]$blobUploadFileSize / 1024 / 1024) + "MB"
+                Time     = $blobUploadDate
+            }) > $null
+
+        Clear-Variable -Name flag, blobUploadFilePath
+    }
+
+    # ƒ[ƒJƒ‹‚É‚ ‚Á‚ÄƒNƒ‰ƒEƒh‚É‚È‚¢ƒtƒ@ƒCƒ‹‚Ì“Ë‡
+    foreach ($LocalPSTInfo in $LocalPSTInfoList) {
+        if (-Not($LocalPSTInfo.Name -in $blobPstFile.Name)) {
+            $blobPstFile.Add([PSCustomObject]@{
+                    Address  = $address
+                    ƒAƒbƒvƒ[ƒhÏ‚İ = "–¢ƒAƒbƒvƒ[ƒh"
+                    Name     = $LocalPSTInfo.Name
+                    FilePath = $LocalPSTInfo.FullName
+                    Size     = "{0:N1}" -f ([Int64]$LocalPSTInfo.Size / 1024 / 1024) + "MB"
+                    Time     = ""
+                }) > $null
+        }
+    }
+
+    # ƒeƒLƒXƒg‚Æ‚µ‚Ä•\¦
+    $blobPstFile | Out-File -FilePath $blobPstFilePath -Encoding UTF8
+    Invoke-Item -Path $blobPstFilePath
+
+    # $output[$output.Count - 2] # INFO: File count: 2
+    # $output[$output.Count - 1] # INFO: Total file size: 175
     $maxTotalPstFileSize = 90000000000
     if ([Int64]$output[$output.Count - 1].Split(":")[2].Substring(1) -gt $maxTotalPstFileSize) {
-        $str = "ã‚¢ãƒƒãƒ—ãƒ­ãƒ¼ãƒ‰å¯èƒ½ãªãƒ•ã‚¡ã‚¤ãƒ«ã‚µã‚¤ã‚ºã‚’è¶…ãˆã¦ã„ã¾ã™ã€‚\nã‚¢ãƒƒãƒ—ãƒ­ãƒ¼ãƒ‰æ¸ˆã¿ã®ãƒ•ã‚¡ã‚¤ãƒ«ã‚’å‰Šé™¤ã™ã‚‹ãŸã‚ã«ã€ç§»è¡Œæ‹…å½“è€…ã«é€£çµ¡ã—ã¦ãã ã•ã„ã€‚\né€£çµ¡å…ˆ : test@example.com"
+        $str = "ƒAƒbƒvƒ[ƒh‰Â”\‚Èƒtƒ@ƒCƒ‹ƒTƒCƒY‚ğ’´‚¦‚Ä‚¢‚Ü‚·B\nƒAƒbƒvƒ[ƒhÏ‚İ‚Ìƒtƒ@ƒCƒ‹‚ğíœ‚·‚éê‡‚ÍAˆÚs’S“–Ò‚Ö˜A—‚ğ‚¨Šè‚¢‚µ‚Ü‚·B\n˜A—æ : test@example.com"
         Write-Host "$(Get-Date -Format "yyyy/MM/dd HH:mm:ss") - $($str)"
         Set-ErrorMessage -Message $str
         # return
     }
-    Remove-Item -Path $outputFilePath -Force
+    # Remove-Item -Path $uploadedFileListPath -Force
 
     return $uploadedPstFile
 }
 
-# PSTãƒ•ã‚¡ã‚¤ãƒ«å–å¾—é–¢æ•°ã‚’è¿½åŠ 
+# PSTƒtƒ@ƒCƒ‹æ“¾ŠÖ”‚ğ’Ç‰Á
 function Get-PstFile {
     # param (
     #     OptionalParameters
     # )
+
+    # ƒTƒCƒY§ŒÀŠm”Fˆ—
+    # $maxTotalPstFileSize = 30000000000
+    # ƒTƒCƒY§ŒÀİ’èƒtƒ@ƒCƒ‹“Ç‚İ‚İ
+    $sizeLimitConfigLocalPath = "$($rootPath)\temp\SizeLimitConfig"
+    $sizeLimitConfigBlobPath = "01_Manage/01_SizeLimit/SizeLimitConfig"
+    $SASURL = "https://$($StorageAccountName).blob.core.windows.net/migrationwiz/$($sizeLimitConfigBlobPath)?$($SASKey)"
+    Start-Process -FilePath $azCopyPath -ArgumentList "copy `"$SASURL`" `"$sizeLimitConfigLocalPath`" " -NoNewWindow -Wait
+    $sizeLimitConfig = Get-Content -Path $sizeLimitConfigLocalPath -Encoding UTF8
+    # ì‹Æƒtƒ@ƒCƒ‹‚¨‚æ‚Ñİ’èíœ
+    # Remove-Item -Path $userListLocalPath -Force
+
+
     $openFileDialog = New-Object System.Windows.Forms.OpenFileDialog
-    $openFileDialog.Title = "ãƒ•ã‚¡ã‚¤ãƒ«ã‚’é¸æŠ"
-    $openFileDialog.Filter = "PSTãƒ•ã‚¡ã‚¤ãƒ« (*.pst)|*.pst"
+    $openFileDialog.Title = "ƒtƒ@ƒCƒ‹‚ğ‘I‘ğ"
+    $openFileDialog.Filter = "PSTƒtƒ@ƒCƒ‹ (*.pst)|*.pst"
     $openFileDialog.InitialDirectory = [Environment]::GetFolderPath("MyDocuments")
 
     if ($openFileDialog.ShowDialog() -eq 'OK') {
         # $selectedFile = $openFileDialog.FileName
-        Write-Host "$(Get-Date -Format "yyyy/MM/dd HH:mm:ss") - é¸æŠã•ã‚ŒãŸãƒ•ã‚¡ã‚¤ãƒ«: $($openFileDialog.FileName)"
+        Write-Host "$(Get-Date -Format "yyyy/MM/dd HH:mm:ss") - ‘I‘ğ‚³‚ê‚½ƒtƒ@ƒCƒ‹: $($openFileDialog.FileName)"
 
+        # ƒtƒ@ƒCƒ‹î•ñ‚ğæ“¾
+        $fileInfo = Get-Item $openFileDialog.FileName
+
+        # PSTƒtƒ@ƒCƒ‹ˆÈŠO‚ª‘I‘ğ‚³‚ê‚½ê‡
         if ($openFileDialog.FileName -notlike "*.pst") {
-            # PSTãƒ•ã‚¡ã‚¤ãƒ«ä»¥å¤–ãŒé¸æŠã•ã‚ŒãŸå ´åˆã€‚æ–°è¦ãƒ•ã‚¡ã‚¤ãƒ«ä½œæˆãªã©ã®æ“ä½œã«ã‚ˆã‚Šå®Ÿè¡Œå¯èƒ½ã€‚
-            $str = "PSTãƒ•ã‚¡ã‚¤ãƒ«ä»¥å¤–ãŒé¸æŠã•ã‚Œã¾ã—ãŸã€‚ãƒ¡ãƒ¼ãƒ«ãŒä¿å­˜ã•ã‚Œã¦ã„ã‚‹PSTãƒ•ã‚¡ã‚¤ãƒ«ã‚’é¸æŠã—ã¦ãã ã•ã„ã€‚"
+            # PSTƒtƒ@ƒCƒ‹ˆÈŠO‚ª‘I‘ğ‚³‚ê‚½ê‡BV‹Kƒtƒ@ƒCƒ‹ì¬‚È‚Ç‚Ì‘€ì‚É‚æ‚èÀs‰Â”\B
+            $str = "PSTƒtƒ@ƒCƒ‹ˆÈŠO‚ª‘I‘ğ‚³‚ê‚Ü‚µ‚½Bƒ[ƒ‹‚ª•Û‘¶‚³‚ê‚Ä‚¢‚éPSTƒtƒ@ƒCƒ‹‚ğ‘I‘ğ‚µ‚Ä‚­‚¾‚³‚¢B"
             Write-Host "$(Get-Date -Format "yyyy/MM/dd HH:mm:ss") - $($str)"
             Set-ErrorMessage -Message $str
             return
         }
 
-        # ãƒ•ã‚¡ã‚¤ãƒ«æƒ…å ±ã‚’å–å¾—
-        $fileInfo = Get-Item $openFileDialog.FileName
+        # ƒTƒCƒY§ŒÀŠm”F
+        if ([Int64]$fileInfo.Length -gt ([Int64]$sizeLimitConfig * 1024 * 1024 * 1024)) {
+            $str = "ƒtƒ@ƒCƒ‹ƒTƒCƒY‚ª§ŒÀ‚ğ’´‚¦‚Ä‚¢‚Ü‚·B$($sizeLimitConfig)GBˆÈã‚ÌPSTƒtƒ@ƒCƒ‹‚Íƒ}ƒjƒ…ƒAƒ‹‚ÌxxP‚ğŠm”F‚µ‚Ä‚­‚¾‚³‚¢BB"
+            Write-Host "$(Get-Date -Format "yyyy/MM/dd HH:mm:ss") - $($str)"
+            Set-ErrorMessage -Message $str
+            return
+        }
 
-        # ãƒ•ã‚¡ã‚¤ãƒ«åã€ãƒ•ã‚¡ã‚¤ãƒ«å®¹é‡ã€ãƒ•ã‚¡ã‚¤ãƒ«ãƒ‘ã‚¹ã‚’è¿½åŠ 
+        # ƒtƒ@ƒCƒ‹–¼Aƒtƒ@ƒCƒ‹—e—ÊAƒtƒ@ƒCƒ‹ƒpƒX‚ğ’Ç‰Á
         $listViewItem = New-Object System.Windows.Forms.ListViewItem($fileInfo.Name)
         $listViewItem.SubItems.Add($fileInfo.Length)
         $listViewItem.SubItems.Add($fileInfo.FullName)
         $listView.Items.Add($listViewItem)
     }
     else {
-        # ãƒ•ã‚¡ã‚¤ãƒ«é¸æŠç”»é¢ã‚’é–‰ã˜ãŸå ´åˆ
-        $str = "ã€Œãƒ•ã‚¡ã‚¤ãƒ«é¸æŠãƒœã‚¿ãƒ³ã€ãŒæŠ¼ã•ã‚Œã¾ã—ãŸãŒã€ãƒ•ã‚¡ã‚¤ãƒ«ãŒé¸æŠã•ã‚Œã¾ã›ã‚“ã§ã—ãŸã€‚"
+        # ƒtƒ@ƒCƒ‹‘I‘ğ‰æ–Ê‚ğ•Â‚¶‚½ê‡
+        $str = "uƒtƒ@ƒCƒ‹‘I‘ğƒ{ƒ^ƒ“v‚ª‰Ÿ‚³‚ê‚Ü‚µ‚½‚ªAƒtƒ@ƒCƒ‹‚ª‘I‘ğ‚³‚ê‚Ü‚¹‚ñ‚Å‚µ‚½B"
         Write-Host "$(Get-Date -Format "yyyy/MM/dd HH:mm:ss") - $($str)"
         Set-ErrorMessage -Message $str
         return
     }
 }
 
-# PSTã‚¢ãƒƒãƒ—ãƒ­ãƒ¼ãƒ‰é–¢æ•°ã‚’è¿½åŠ 
+# PSTƒAƒbƒvƒ[ƒhŠÖ”‚ğ’Ç‰Á
 function Invoke-PstFileUpload {
     param (
         [System.Windows.Forms.ListView+ListViewItemCollection]$ItemList
     )
-    Write-Host "PSTãƒ•ã‚¡ã‚¤ãƒ«ã‚’ã‚¢ãƒƒãƒ—ãƒ­ãƒ¼ãƒ‰ã—ã¾ã™ã€‚"
 
-    # ãƒ¡ãƒ¼ãƒ«ã‚¢ãƒ‰ãƒ¬ã‚¹åˆ†è§£
+    # ƒ[ƒ‹ƒAƒhƒŒƒX•ª‰ğ
     $address = ($emailTextBox1.Text).Split("@")[0]
     Write-Host $address
 
-    # ãƒ¦ãƒ¼ã‚¶ãƒ¼ãƒªã‚¹ãƒˆèª­ã¿è¾¼ã¿
+    # ƒ†[ƒU[ƒŠƒXƒg“Ç‚İ‚İ
+    Write-Host "$(Get-Date -Format "yyyy/MM/dd HH:mm:ss") - İ’èƒtƒ@ƒCƒ‹‚ğ“Ç‚İ‚İ‚Ü‚·B"
     $userListLocalPath = "$($rootPath)\temp\UserList.csv"
     $userListBlobPath = "01_Manage/00_Group/UserList.csv"
     $SASURL = "https://$($StorageAccountName).blob.core.windows.net/migrationwiz/$($userListBlobPath)?$($SASKey)"
     Start-Process -FilePath $azCopyPath -ArgumentList "copy `"$SASURL`" `"$userListLocalPath`" " -NoNewWindow -Wait
     $userList = Import-Csv -Path $userListLocalPath -Encoding UTF8
+    $group = $userList | Where-Object { $_.Mail -eq $($emailTextBox1.Text) }
 
-    # å¸¯åŸŸåˆ¶é™ãƒªã‚¹ãƒˆèª­ã¿è¾¼ã¿
+    # ‘Ñˆæ§ŒÀƒŠƒXƒg“Ç‚İ‚İ
     $trafficListLocalPath = "$($rootPath)\temp\TrafficControl.csv"
     $trafficListBlobPath = "01_Manage/00_Group/TrafficControl.csv"
     $SASURL = "https://$($StorageAccountName).blob.core.windows.net/migrationwiz/$($trafficListBlobPath)?$($SASKey)"
     Start-Process -FilePath $azCopyPath -ArgumentList "copy `"$SASURL`" `"$trafficListLocalPath`" " -NoNewWindow -Wait
     $trafficControlList = Import-Csv -Path $trafficListLocalPath -Encoding UTF8
-
-    # ãƒ¦ãƒ¼ã‚¶ãƒ¼ãƒªã‚¹ãƒˆã¨å¸¯åŸŸåˆ¶é™ãƒªã‚¹ãƒˆã‚’çµåˆ
-    $group = $userList | Where-Object { $_.Mail -eq $($emailTextBox1.Text) }
+    Write-Host "$(Get-Date -Format "yyyy/MM/dd HH:mm:ss") - İ’èƒtƒ@ƒCƒ‹‚Ì“Ç‚İ‚İŠ®—¹B"
+    # ‘Ñˆæ§ŒÀİ’è
     $bpsRate = $trafficControlList | Where-Object { $_.Group -eq $group.Group }
-    if ($bpsRate.Speed -ne 0) {
-        $NetQoSPolicyName = "AzCopyPolicy01"
-        $DSCPAction = 1
-        New-NetQosPolicy -Name $NetQoSPolicyName -AppPathNameMatchCondition $azCopyPath -DSCPAction $DSCPAction -ThrottleRateActionBitsPerSecond $bpsRate -Precedence 0
-    }
+    $NetQoSPolicyName = "AzCopyPolicy01"
+    $DSCPAction = 1
+    Write-Host "$(Get-Date -Format "yyyy/MM/dd HH:mm:ss") - ƒlƒbƒgƒ[ƒN–‘Oİ’è‚ğÀsB"
+    New-NetQosPolicy -Name $NetQoSPolicyName -AppPathNameMatchCondition $azCopyPath -DSCPAction $DSCPAction -ThrottleRateActionBitsPerSecond $bpsRate -Precedence 0
 
-    # ãƒ•ã‚¡ã‚¤ãƒ«ã‚¢ãƒƒãƒ—ãƒ­ãƒ¼ãƒ‰å‡¦ç†
+    # ƒtƒ@ƒCƒ‹ƒAƒbƒvƒ[ƒhˆ—
+    Write-Host "$(Get-Date -Format "yyyy/MM/dd HH:mm:ss") - ƒAƒbƒvƒ[ƒhˆ—ŠJnB"
     foreach ($item in $ItemList) {
+        Write-Host "$(Get-Date -Format "yyyy/MM/dd HH:mm:ss") - $($item.SubItems[0].Text)‚ÌƒAƒbƒvƒ[ƒhB"
         $filePath = $item.SubItems[2].Text
         $time = Get-Date -Format "yyyyMMddHHmmss"
         Start-Sleep -Seconds 1
         $destinationPath = "00_User/$($group.Group)/$($address)/00_UserUpload/$($time)/"
         $SASURL = "https://$($StorageAccountName).blob.core.windows.net/migrationwiz/$($destinationPath)?$($SASKey)"
         Start-Process -FilePath $azCopyPath -ArgumentList "copy `"$filePath`" `"$SASURL`"" -Wait
+        [PSCustomObject]@{
+            Address  = $address
+            Time     = $time
+            FilePath = $item.SubItems[2].Text
+            FileSize = $item.SubItems[1].Text
+        } | Export-Csv -Path $uploadedPstLogFilePath -Append -Encoding UTF8 -NoTypeInformation
     }
+    Write-Host "$(Get-Date -Format "yyyy/MM/dd HH:mm:ss") - ƒAƒbƒvƒ[ƒhˆ—Š®—¹B"
 
-    # ä½œæ¥­ãƒ•ã‚¡ã‚¤ãƒ«ãŠã‚ˆã³è¨­å®šå‰Šé™¤
-    Remove-Item -Path $userListLocalPath -Force
-    Remove-Item -Path $trafficListLocalPath -Force
-    if ($bpsRate.Speed -ne 0) {
-        Remove-NetQosPolicy -Name $NetQoSPolicyName -Confirm:$false
-    }
+    # ì‹Æƒtƒ@ƒCƒ‹‚¨‚æ‚Ñİ’èíœ
+    # Remove-Item -Path $userListLocalPath -Force
+    # Remove-Item -Path $trafficListLocalPath -Force
+    Remove-NetQosPolicy -Name $NetQoSPolicyName -Confirm:$false
+
+    # ƒŠƒXƒgƒNƒŠƒA
+    $listView.Items.Clear()
 }
 
-# ãƒ¡ãƒ¼ãƒ«ã‚¢ãƒ‰ãƒ¬ã‚¹ä¸€è‡´ãƒã‚§ãƒƒã‚¯é–¢æ•°ã‚’è¿½åŠ 
+# ƒ[ƒ‹ƒAƒhƒŒƒXˆê’vƒ`ƒFƒbƒNŠÖ”‚ğ’Ç‰Á
 function Test-EmailAddress {
-    # ãƒ¡ãƒ¼ãƒ«ã‚¢ãƒ‰ãƒ¬ã‚¹ãŒä¸€è‡´ã—ã¦ã„ã‚‹ã‹ã©ã†ã‹ã‚’ç¢ºèª
+    # ƒ[ƒ‹ƒAƒhƒŒƒX‚ªˆê’v‚µ‚Ä‚¢‚é‚©‚Ç‚¤‚©‚ğŠm”F
     if ($emailTextBox1.Text -ne $emailTextBox2.Text) {
-        Write-Host "ãƒ¡ãƒ¼ãƒ«ã‚¢ãƒ‰ãƒ¬ã‚¹ãŒä¸€è‡´ã—ã¦ã„ã¾ã›ã‚“ã€‚å‡¦ç†ã‚’ã‚¹ã‚­ãƒƒãƒ—ã—ã¾ã™ã€‚"
-        # ã‚¨ãƒ©ãƒ¼ãƒ¡ãƒƒã‚»ãƒ¼ã‚¸ã‚’è¡¨ç¤º
-        Set-ErrorMessage -Message "ãƒ¡ãƒ¼ãƒ«ã‚¢ãƒ‰ãƒ¬ã‚¹ãŒä¸€è‡´ã—ã¦ã„ã¾ã›ã‚“ã€‚ãƒ¡ãƒ¼ãƒ«ã‚¢ãƒ‰ãƒ¬ã‚¹å…¥åŠ›æ¬„ã‚’ä¿®æ­£ã—ã¦ãã ã•ã„ã€‚"
+        Write-Host "$(Get-Date -Format "yyyy/MM/dd HH:mm:ss") - ƒ[ƒ‹ƒAƒhƒŒƒX‚ªˆê’v‚µ‚Ä‚¢‚Ü‚¹‚ñBˆ—‚ğƒXƒLƒbƒv‚µ‚Ü‚·B"
+        # ƒGƒ‰[ƒƒbƒZ[ƒW‚ğ•\¦
+        Set-ErrorMessage -Message "ƒ[ƒ‹ƒAƒhƒŒƒX‚ªˆê’v‚µ‚Ä‚¢‚Ü‚¹‚ñBƒ[ƒ‹ƒAƒhƒŒƒX“ü—Í—“‚ğC³‚µ‚Ä‚­‚¾‚³‚¢B"
         return $false
     }
     return $true
 }
 
-# ã‚¨ãƒ©ãƒ¼ãƒ¡ãƒƒã‚»ãƒ¼ã‚¸ã®è¨­å®š
+# ƒGƒ‰[ƒƒbƒZ[ƒW‚Ìİ’è
 function Set-ErrorMessage {
     param (
         [string]$Message
@@ -184,66 +352,65 @@ function Set-ErrorMessage {
 }
 
 function Test-OutlookRunning {
-    # Get-Processã‚³ãƒãƒ³ãƒ‰ãƒ¬ãƒƒãƒˆã§Outlookã®ãƒ—ãƒ­ã‚»ã‚¹ã‚’å–å¾—
+    # Get-ProcessƒRƒ}ƒ“ƒhƒŒƒbƒg‚ÅOutlook‚ÌƒvƒƒZƒX‚ğæ“¾
     $outlookProcess = Get-Process -Name "OUTLOOK" -ErrorAction SilentlyContinue
-    if ($true) {
-        # if ($outlookProcess) {
-        $result = [System.Windows.Forms.MessageBox]::Show("Outlookãƒ—ãƒ­ã‚»ã‚¹ãŒå®Ÿè¡Œä¸­ã§ã™ã€‚å¼·åˆ¶çµ‚äº†ã—ã¾ã™ã‹ï¼Ÿ", "è­¦å‘Š", [System.Windows.Forms.MessageBoxButtons]::OKCancel, [System.Windows.Forms.MessageBoxIcon]::Warning)
-        if ($result -eq [System.Windows.Forms.DialogResult]::OK) {
-            $outlookProcess | ForEach-Object { $_.Kill() }
-        }
+    if ($null -ne $outlookProcess) {
+        $str = "Outlook‚ªÀs’†‚Å‚·BI—¹‚µ‚Ä‚­‚¾‚³‚¢B"
+        [System.Windows.Forms.MessageBox]::Show($str, "Œx", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Warning)
+        Set-ErrorMessage -Message $str
+        return $false
     }
-    # ãƒ—ãƒ­ã‚»ã‚¹ãŒå­˜åœ¨ã™ã‚‹å ´åˆã¯$trueã‚’ã€å­˜åœ¨ã—ãªã„å ´åˆã¯$falseã‚’è¿”ã™
-    return ($null -ne $outlookProcess)
+    # ƒvƒƒZƒX‚ª‘¶İ‚µ‚È‚¢ê‡‚Í$true‚ğA‘¶İ‚·‚éê‡‚Í$false‚ğ•Ô‚·
+    return $true
 }
 
-# ãƒ•ã‚©ãƒ¼ãƒ ã‚’ä½œæˆ
+# ƒtƒH[ƒ€‚ğì¬
 $form = New-Object System.Windows.Forms.Form
-$form.Text = "æ–°PCç§»è¡Œç”¨PSTã‚¢ãƒƒãƒ—ãƒ­ãƒ¼ãƒ‰"
+$form.Text = "VPCˆÚs—pPSTƒAƒbƒvƒ[ƒh"
 $form.Size = New-Object System.Drawing.Size($width, $height)
 
-# èª¬æ˜æ–‡ç« ã‚’è¿½åŠ 
+# à–¾•¶Í‚ğ’Ç‰Á
 $heightColumn = 10
 $descriptionLabel = New-Object System.Windows.Forms.Label
-$descriptionLabel.Text = "â‘ ç§»è¡Œã‚’å¸Œæœ›ã™ã‚‹ãƒ¡ãƒ¼ãƒ«ã‚¢ãƒ‰ãƒ¬ã‚¹ã‚’å…¥åŠ›ã—ã¦ãã ã•ã„ã€‚"
+$descriptionLabel.Text = "‡@ˆÚs‚ğŠó–]‚·‚éƒ[ƒ‹ƒAƒhƒŒƒX‚ğ“ü—Í‚µ‚Ä‚­‚¾‚³‚¢B"
 $descriptionLabel.Location = New-Object System.Drawing.Point(10, $heightColumn)
-$descriptionLabel.AutoSize = $true
+$descriptionLabel.Width = 300
 $form.Controls.Add($descriptionLabel)
 
-# ãƒ¡ãƒ¼ãƒ«ã‚¢ãƒ‰ãƒ¬ã‚¹å…¥åŠ›æ¬„1
+# ƒ[ƒ‹ƒAƒhƒŒƒX“ü—Í—“1
 $heightColumn += 25
 $emailLabel1 = New-Object System.Windows.Forms.Label
-$emailLabel1.Text = "ãƒ¡ãƒ¼ãƒ«ã‚¢ãƒ‰ãƒ¬ã‚¹ï¼š"
+$emailLabel1.Text = "ƒ[ƒ‹ƒAƒhƒŒƒXF"
 $emailLabel1.Location = New-Object System.Drawing.Point(10, $heightColumn)
-$emailLabel2.AutoSize = $true
+$emailLabel1.Width = 140
 $form.Controls.Add($emailLabel1)
 
 $emailTextBox1 = New-Object System.Windows.Forms.TextBox
-$emailTextBox1.Location = New-Object System.Drawing.Point(140, $heightColumn)
+$emailTextBox1.Location = New-Object System.Drawing.Point(150, $heightColumn)
 $emailTextBox1.Text = "test@example.com" # Set initial value
 $emailTextBox1.Width = 390 # Set the width of the text box
 $emailTextBox1.Enabled = $false # Make the text box read-only by default
 $form.Controls.Add($emailTextBox1)
 
-# ãƒ¡ãƒ¼ãƒ«ã‚¢ãƒ‰ãƒ¬ã‚¹å…¥åŠ›æ¬„2
+# ƒ[ƒ‹ƒAƒhƒŒƒX“ü—Í—“2
 $heightColumn += 25
 $emailLabel2 = New-Object System.Windows.Forms.Label
-$emailLabel2.Text = "ãƒ¡ãƒ¼ãƒ«ã‚¢ãƒ‰ãƒ¬ã‚¹(ç¢ºèªç”¨)ï¼š"
+$emailLabel2.Text = "ƒ[ƒ‹ƒAƒhƒŒƒX(Šm”F—p)F"
 $emailLabel2.Location = New-Object System.Drawing.Point(10, $heightColumn)
-$emailLabel2.AutoSize = $true
+$emailLabel2.Width = 140
 $form.Controls.Add($emailLabel2)
 
 $emailTextBox2 = New-Object System.Windows.Forms.TextBox
-$emailTextBox2.Location = New-Object System.Drawing.Point(140, $heightColumn)
+$emailTextBox2.Location = New-Object System.Drawing.Point(150, $heightColumn)
 $emailTextBox2.Text = "test@example.com" # Set initial value
 $emailTextBox2.Width = 390 # Set the width of the text box
 $emailTextBox2.Enabled = $false # Make the text box read-only by default
 $form.Controls.Add($emailTextBox2)
 
-# ãƒã‚§ãƒƒã‚¯ãƒœãƒƒã‚¯ã‚¹
+# ƒ`ƒFƒbƒNƒ{ƒbƒNƒX
 $heightColumn += 25
 $checkBoxLabel = New-Object System.Windows.Forms.Label
-$checkBoxLabel.Text = "ãƒ¡ãƒ¼ãƒ«ã‚¢ãƒ‰ãƒ¬ã‚¹ç·¨é›†ãƒœã‚¿ãƒ³ï¼š"
+$checkBoxLabel.Text = "ƒ[ƒ‹ƒAƒhƒŒƒX•ÒWƒ{ƒ^ƒ“F"
 $checkBoxLabel.Location = New-Object System.Drawing.Point(10, $heightColumn)
 $checkBoxLabel.Width = 140 # Set the width of the label
 $form.Controls.Add($checkBoxLabel)
@@ -252,7 +419,7 @@ $checkBox = New-Object System.Windows.Forms.CheckBox
 $checkBox.Location = New-Object System.Drawing.Point(150, $heightColumn)
 $form.Controls.Add($checkBox)
 
-# ãƒã‚§ãƒƒã‚¯ãƒœãƒƒã‚¯ã‚¹ã®ã‚¤ãƒ™ãƒ³ãƒˆãƒãƒ³ãƒ‰ãƒ©
+# ƒ`ƒFƒbƒNƒ{ƒbƒNƒX‚ÌƒCƒxƒ“ƒgƒnƒ“ƒhƒ‰
 $checkBox.Add_CheckedChanged({
         if ($checkBox.Checked) {
             $emailTextBox1.Enabled = $true
@@ -264,17 +431,17 @@ $checkBox.Add_CheckedChanged({
         }
     })
 
-# è­¦å‘Šãƒ©ãƒ™ãƒ«
+# Œxƒ‰ƒxƒ‹
 $heightColumn += 25
 $warningLabel = New-Object System.Windows.Forms.Label
-$warningLabel.Text = "ã‚¨ãƒ©ãƒ¼ï¼šãƒ¡ãƒ¼ãƒ«ã‚¢ãƒ‰ãƒ¬ã‚¹ãŒä¸€è‡´ã—ã¾ã›ã‚“"
+$warningLabel.Text = "ƒGƒ‰[Fƒ[ƒ‹ƒAƒhƒŒƒX‚ªˆê’v‚µ‚Ü‚¹‚ñ"
 $warningLabel.Location = New-Object System.Drawing.Point(10, $heightColumn)
 $warningLabel.AutoSize = $true
 $warningLabel.ForeColor = [System.Drawing.Color]::Red
 $warningLabel.Visible = $false
 $form.Controls.Add($warningLabel)
 
-# ãƒ¡ãƒ¼ãƒ«ã‚¢ãƒ‰ãƒ¬ã‚¹ã®ä¸€è‡´ãƒã‚§ãƒƒã‚¯ã®ã‚¤ãƒ™ãƒ³ãƒˆãƒãƒ³ãƒ‰ãƒ©
+# ƒ[ƒ‹ƒAƒhƒŒƒX‚Ìˆê’vƒ`ƒFƒbƒN‚ÌƒCƒxƒ“ƒgƒnƒ“ƒhƒ‰
 $emailTextBox1.Add_TextChanged({
         if ($emailTextBox1.Text -ne $emailTextBox2.Text) {
             $warningLabel.Visible = $true
@@ -294,97 +461,98 @@ $emailTextBox2.Add_TextChanged({
     })
 
 
-# èª¬æ˜æ–‡ç« ã‚’è¿½åŠ 
+# à–¾•¶Í‚ğ’Ç‰Á
 $heightColumn += 40
 $descriptionLabel = New-Object System.Windows.Forms.Label
-$descriptionLabel.Text = "â‘¡ã€Œç¢ºèªã€ã‚’æŠ¼ã™ã¨ã‚¢ãƒƒãƒ—ãƒ­ãƒ¼ãƒ‰æ¸ˆã¿ã®PSTãƒ•ã‚¡ã‚¤ãƒ«ãŠã‚ˆã³PCå†…ã®PSTãƒ•ã‚¡ã‚¤ãƒ«ã‚’ç¢ºèªã§ãã¾ã™ã€‚"
+$descriptionLabel.Text = "‡AuŠm”Fv‚ğ‰Ÿ‚·‚ÆƒAƒbƒvƒ[ƒhÏ‚İ‚ÌPSTƒtƒ@ƒCƒ‹‚¨‚æ‚ÑPC“à‚ÌPSTƒtƒ@ƒCƒ‹‚ğŠm”F‚Å‚«‚Ü‚·B"
 $descriptionLabel.Location = New-Object System.Drawing.Point(10, $heightColumn)
 $descriptionLabel.AutoSize = $true
 $form.Controls.Add($descriptionLabel)
 
-# ç¢ºèªãƒœã‚¿ãƒ³
+# Šm”Fƒ{ƒ^ƒ“
 $heightColumn += 25
 $confirmButton = New-Object System.Windows.Forms.Button
-$confirmButton.Text = "ç¢ºèª"
+$confirmButton.Text = "Šm”F"
 $confirmButton.Location = New-Object System.Drawing.Point(10, $heightColumn)
 $form.Controls.Add($confirmButton)
-# ãƒœã‚¿ãƒ³ãŒã‚¯ãƒªãƒƒã‚¯ã•ã‚ŒãŸã¨ãã®å‡¦ç†
+# ƒ{ƒ^ƒ“‚ªƒNƒŠƒbƒN‚³‚ê‚½‚Æ‚«‚Ìˆ—
 $confirmButton.Add_Click({
-        # ãƒ¡ãƒ¼ãƒ«ã‚¢ãƒ‰ãƒ¬ã‚¹ãŒä¸€è‡´ã—ã¦ã„ã‚‹ã‹ã©ã†ã‹ã‚’ç¢ºèª
-        if (Test-EmailAddress -eq $true) {
-            # é–¢æ•°ã‚’å‘¼ã³å‡ºã™å‡¦ç†ã‚’è¿½åŠ 
-            Write-Host "ç¢ºèªãƒœã‚¿ãƒ³ãŒã‚¯ãƒªãƒƒã‚¯ã•ã‚Œã¾ã—ãŸã€‚"
+        # ƒ[ƒ‹ƒAƒhƒŒƒXˆê’vŠm”F & OutlookÀsŠm”F
+        if (Test-EmailAddress -eq $true -and Test-OutlookRunning -eq $true) {
+            # ŠÖ”‚ğŒÄ‚Ño‚·ˆ—‚ğ’Ç‰Á
+            Write-Host "$(Get-Date -Format "yyyy/MM/dd HH:mm:ss") - Šm”Fƒ{ƒ^ƒ“‚ªƒNƒŠƒbƒN‚³‚ê‚Ü‚µ‚½B"
+            Get-UploadedPstFile
         }
     })
 
-# èª¬æ˜æ–‡ç« ã‚’è¿½åŠ 
+# à–¾•¶Í‚ğ’Ç‰Á
 $heightColumn += 40
 $descriptionLabel = New-Object System.Windows.Forms.Label
-$descriptionLabel.Text = "â‘¢ã€Œãƒ•ã‚¡ã‚¤ãƒ«é¸æŠã€ã‚’æŠ¼ã™ã¨ã‚¢ãƒƒãƒ—ãƒ­ãƒ¼ãƒ‰ã™ã‚‹PSTãƒ•ã‚¡ã‚¤ãƒ«ã‚’é¸æŠã™ã‚‹ã“ã¨ãŒã§ãã¾ã™ã€‚" + "`r`n" + "1å›ã®ã‚¢ãƒƒãƒ—ãƒ­ãƒ¼ãƒ‰ã§åŒæ™‚ã«10ãƒ•ã‚¡ã‚¤ãƒ«ã¾ã§å¯èƒ½ã€‚"
+$descriptionLabel.Text = "‡Buƒtƒ@ƒCƒ‹‘I‘ğv‚ğ‰Ÿ‚·‚ÆƒAƒbƒvƒ[ƒh‚·‚éPSTƒtƒ@ƒCƒ‹‚ğ‘I‘ğ‚·‚é‚±‚Æ‚ª‚Å‚«‚Ü‚·B" + "`r`n" + "1‰ñ‚ÌƒAƒbƒvƒ[ƒh‚Å“¯‚É10ƒtƒ@ƒCƒ‹‚Ü‚Å‰Â”\B"
 $descriptionLabel.Location = New-Object System.Drawing.Point(10, $heightColumn)
 $descriptionLabel.AutoSize = $true
 $form.Controls.Add($descriptionLabel)
 
-# ãƒ•ã‚¡ã‚¤ãƒ«é¸æŠãƒœã‚¿ãƒ³
+# ƒtƒ@ƒCƒ‹‘I‘ğƒ{ƒ^ƒ“
 $heightColumn += 40
 $pstButton = New-Object System.Windows.Forms.Button
-$pstButton.Text = "ãƒ•ã‚¡ã‚¤ãƒ«é¸æŠ"
+$pstButton.Text = "ƒtƒ@ƒCƒ‹‘I‘ğ"
 $pstButton.Location = New-Object System.Drawing.Point(10, $heightColumn)
 $form.Controls.Add($pstButton)
-# ãƒœã‚¿ãƒ³ãŒã‚¯ãƒªãƒƒã‚¯ã•ã‚ŒãŸã¨ãã®å‡¦ç†
+# ƒ{ƒ^ƒ“‚ªƒNƒŠƒbƒN‚³‚ê‚½‚Æ‚«‚Ìˆ—
 $pstButton.Add_Click({
-        # ãƒ¡ãƒ¼ãƒ«ã‚¢ãƒ‰ãƒ¬ã‚¹ãŒä¸€è‡´ã—ã¦ã„ã‚‹ã‹ã©ã†ã‹ã‚’ç¢ºèª
-        if (Test-EmailAddress -eq $true) {
-            # é–¢æ•°ã‚’å‘¼ã³å‡ºã™å‡¦ç†ã‚’è¿½åŠ 
-            Write-Host "PSTé¸æŠãƒœã‚¿ãƒ³ãŒã‚¯ãƒªãƒƒã‚¯ã•ã‚Œã¾ã—ãŸã€‚"
+        # ƒ[ƒ‹ƒAƒhƒŒƒXˆê’vŠm”F & OutlookÀsŠm”F
+        if (Test-EmailAddress -eq $true -and Test-OutlookRunning -eq $true) {
+            # ŠÖ”‚ğŒÄ‚Ño‚·ˆ—‚ğ’Ç‰Á
+            Write-Host "$(Get-Date -Format "yyyy/MM/dd HH:mm:ss") - ƒtƒ@ƒCƒ‹‘I‘ğƒ{ƒ^ƒ“‚ªƒNƒŠƒbƒN‚³‚ê‚Ü‚µ‚½B"
             Get-PstFile
         }
     })
 
-# ï¼‘ï¼è¡Œã®ãƒªã‚¹ãƒˆ
+# ‚P‚Os‚ÌƒŠƒXƒg
 $heightColumn += 25
 $listView = New-Object System.Windows.Forms.ListView
 $listView.Location = New-Object System.Drawing.Point(10, $heightColumn)
 $listView.Size = New-Object System.Drawing.Size(560, 150)
 $listView.View = [System.Windows.Forms.View]::Details
-$listView.Columns.Add("ãƒ•ã‚¡ã‚¤ãƒ«å", 200) > $null
-$listView.Columns.Add("ãƒ•ã‚¡ã‚¤ãƒ«å®¹é‡", 100) > $null
-$listView.Columns.Add("ãƒ•ã‚¡ã‚¤ãƒ«ãƒ‘ã‚¹", 250) > $null
+$listView.Columns.Add("ƒtƒ@ƒCƒ‹–¼", 200) > $null
+$listView.Columns.Add("ƒtƒ@ƒCƒ‹—e—Ê", 100) > $null
+$listView.Columns.Add("ƒtƒ@ƒCƒ‹ƒpƒX", 250) > $null
 $form.Controls.Add($listView)
 
-# èª¬æ˜æ–‡ç« ã‚’è¿½åŠ 
+# à–¾•¶Í‚ğ’Ç‰Á
 $heightColumn += 180
 $descriptionLabel = New-Object System.Windows.Forms.Label
-$descriptionLabel.Text = "â‘£ã€Œã‚¢ãƒƒãƒ—ãƒ­ãƒ¼ãƒ‰ã€ã‚’æŠ¼ã™ã¨é¸æŠã•ã‚ŒãŸPSTãƒ•ã‚¡ã‚¤ãƒ«ã‚’ã‚¢ãƒƒãƒ—ãƒ­ãƒ¼ãƒ‰ã™ã‚‹ã“ã¨ãŒã§ãã¾ã™ã€‚"
+$descriptionLabel.Text = "‡CuƒAƒbƒvƒ[ƒhv‚ğ‰Ÿ‚·‚Æ‘I‘ğ‚³‚ê‚½PSTƒtƒ@ƒCƒ‹‚ğƒAƒbƒvƒ[ƒh‚·‚é‚±‚Æ‚ª‚Å‚«‚Ü‚·B"
 $descriptionLabel.Location = New-Object System.Drawing.Point(10, $heightColumn)
 $descriptionLabel.AutoSize = $true
 $form.Controls.Add($descriptionLabel)
 
-# ã‚¢ãƒƒãƒ—ãƒ­ãƒ¼ãƒ‰ãƒœã‚¿ãƒ³
+# ƒAƒbƒvƒ[ƒhƒ{ƒ^ƒ“
 $heightColumn += 25
 $uploadButton = New-Object System.Windows.Forms.Button
-$uploadButton.Text = "ã‚¢ãƒƒãƒ—ãƒ­ãƒ¼ãƒ‰"
+$uploadButton.Text = "ƒAƒbƒvƒ[ƒh"
 $uploadButton.Location = New-Object System.Drawing.Point(10, $heightColumn)
 $form.Controls.Add($uploadButton)
-# ãƒœã‚¿ãƒ³ãŒã‚¯ãƒªãƒƒã‚¯ã•ã‚ŒãŸã¨ãã®å‡¦ç†
+# ƒ{ƒ^ƒ“‚ªƒNƒŠƒbƒN‚³‚ê‚½‚Æ‚«‚Ìˆ—
 $uploadButton.Add_Click({
-        # ãƒ¡ãƒ¼ãƒ«ã‚¢ãƒ‰ãƒ¬ã‚¹ãŒä¸€è‡´ã—ã¦ã„ã‚‹ã‹ã©ã†ã‹ã‚’ç¢ºèª
-        if (Test-EmailAddress -eq $true) {
-            # é–¢æ•°ã‚’å‘¼ã³å‡ºã™å‡¦ç†ã‚’è¿½åŠ 
-            Write-Host "ã‚¢ãƒƒãƒ—ãƒ­ãƒ¼ãƒ‰ãƒœã‚¿ãƒ³ãŒã‚¯ãƒªãƒƒã‚¯ã•ã‚Œã¾ã—ãŸã€‚"
+        # ƒ[ƒ‹ƒAƒhƒŒƒXˆê’vŠm”F & OutlookÀsŠm”F
+        if (Test-EmailAddress -eq $true -and Test-OutlookRunning -eq $true) {
+            # ŠÖ”‚ğŒÄ‚Ño‚·ˆ—‚ğ’Ç‰Á
+            Write-Host "$(Get-Date -Format "yyyy/MM/dd HH:mm:ss") - ƒAƒbƒvƒ[ƒhƒ{ƒ^ƒ“‚ªƒNƒŠƒbƒN‚³‚ê‚Ü‚µ‚½B"
             Invoke-PstFileUpload -ItemList $listView.Items
         }
     })
 
-# èª¬æ˜æ–‡ç« ã‚’è¿½åŠ 
+# à–¾•¶Í‚ğ’Ç‰Á
 $heightColumn += 40
 $descriptionLabel = New-Object System.Windows.Forms.Label
-$descriptionLabel.Text = "â—‹ãƒ¡ãƒƒã‚»ãƒ¼ã‚¸è¡¨ç¤ºæ¬„"
+$descriptionLabel.Text = "›ƒƒbƒZ[ƒW•\¦—“"
 $descriptionLabel.Location = New-Object System.Drawing.Point(10, $heightColumn)
 $descriptionLabel.AutoSize = $true
 $form.Controls.Add($descriptionLabel)
 
-# ã‚¨ãƒ©ãƒ¼ãƒ¡ãƒƒã‚»ãƒ¼ã‚¸ã‚’è¡¨ç¤º
+# ƒGƒ‰[ƒƒbƒZ[ƒW‚ğ•\¦
 $heightColumn += 25
 $errorLabel = New-Object System.Windows.Forms.Label
 $errorLabel.Text = ""
@@ -393,5 +561,12 @@ $errorLabel.AutoSize = $true
 $errorLabel.ForeColor = [System.Drawing.Color]::Red
 $form.Controls.Add($errorLabel)
 
-# ãƒ•ã‚©ãƒ¼ãƒ ã‚’è¡¨ç¤º
+# ƒtƒH[ƒ€‚ª•Â‚¶‚ç‚ê‚½‚±‚Æ‚ğŒŸ’m‚·‚éƒCƒxƒ“ƒgƒnƒ“ƒhƒ‰
+$form.Add_FormClosed({
+        Write-Host "$(Get-Date -Format "yyyy/MM/dd HH:mm:ss") - ƒtƒH[ƒ€‚ª•Â‚¶‚ç‚ê‚Ü‚µ‚½B"
+        Stop-Transcript
+        Stop-Process -Id $PID
+    })
+
+# ƒtƒH[ƒ€‚ğ•\¦
 $form.ShowDialog()
