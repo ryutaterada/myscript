@@ -54,7 +54,11 @@ function Get-UploadedPstFile {
 
     # 所属グループが存在しない場合
     if ($null -eq $group.Group) {
-        Set-ErrorMessage -Message "あなたのメールアドレスが移行対象者として登録されていません。\n確認のために、移行担当者へ連絡をお願いします。\n連絡先 : test@example.com"
+        Set-ErrorMessage -Message @"
+あなたのメールアドレスが移行対象者として登録されていません。
+確認のために、移行担当者へ連絡をお願いします。
+連絡先 : test@example.com
+"@
     }
 
     # 作業ファイルおよび設定削除
@@ -135,21 +139,21 @@ $totalSize
             $blobUploadFileSize -in $LocalPSTInfoList[$LocalPSTIndex].Size -and
             $LocalPSTIndex -ne -1) {
             $flag = "クラウドにアップロード済み"
-            $blobUploadFilePath = $LocalPSTInfoList[$LocalPSTIndex].FullName
+            $blobUploadFilePath = $LocalPSTInfoList[$LocalPSTIndex].FilePath
         }
         elseif (
             $blobUploadFileName -in $LocalPSTInfoList.Name -and
             [Int64]$blobUploadFileSize -lt [Int64]$LocalPSTInfoList[$LocalPSTIndex].Size -and
             $LocalPSTIndex -ne -1) {
             $flag = "クラウドにアップロード済み&容量増加"
-            $blobUploadFilePath = $LocalPSTInfoList[$LocalPSTIndex].FullName
+            $blobUploadFilePath = $LocalPSTInfoList[$LocalPSTIndex].FilePath
         }
         elseif (
             $blobUploadFileName -in $LocalPSTInfoList.Name -and
             [Int64]$blobUploadFileSize -gt [Int64]$LocalPSTInfoList[$LocalPSTIndex].Size -and
             $LocalPSTIndex -ne -1) {
             $flag = "クラウドにアップロード済み&容量減少(別ファイルまたはバックアップファイル)"
-            $blobUploadFilePath = $LocalPSTInfoList[$LocalPSTIndex].FullName
+            $blobUploadFilePath = $LocalPSTInfoList[$LocalPSTIndex].FilePath
         }
         else {
             $flag = "クラウドにアップロード済み&PC内にファイルが存在しない"
@@ -165,12 +169,12 @@ $totalSize
 
         # ファイル情報を追加
         $blobPstFile.Add([PSCustomObject]@{
-                Address  = $address
-                アップロード済み = $flag
-                Name     = $blobUploadFileName
-                FilePath = $blobUploadFilePath
-                Size     = "{0:N1}" -f ([Int64]$blobUploadFileSize / 1024 / 1024) + "MB"
-                Time     = $blobUploadDate
+                メールアドレス  = $address
+                ステータス    = $flag
+                ファイル名    = $blobUploadFileName
+                ファイルパス   = $blobUploadFilePath
+                ファイル容量   = "{0:N1}" -f ([Int64]$blobUploadFileSize / 1024 / 1024) + "MB"
+                アップロード日時 = $blobUploadDate
             }) > $null
 
         Clear-Variable -Name flag, blobUploadFilePath
@@ -178,14 +182,15 @@ $totalSize
 
     # ローカルにあってクラウドにないファイルの突合
     foreach ($LocalPSTInfo in $LocalPSTInfoList) {
+        Write-Host "Debug: LocalPSTInfo: $($LocalPSTInfo | Out-String)"
         if (-Not($LocalPSTInfo.Name -in $blobPstFile.Name)) {
             $blobPstFile.Add([PSCustomObject]@{
-                    Address  = $address
-                    アップロード済み = "未アップロード"
-                    Name     = $LocalPSTInfo.Name
-                    FilePath = $LocalPSTInfo.FullName
-                    Size     = "{0:N1}" -f ([Int64]$LocalPSTInfo.Size / 1024 / 1024) + "MB"
-                    Time     = ""
+                    メールアドレス  = $address
+                    ステータス    = "未アップロード"
+                    ファイル名    = $LocalPSTInfo.Name
+                    ファイルパス   = $LocalPSTInfo.FilePath
+                    ファイル容量   = "{0:N1}" -f ([Int64]$LocalPSTInfo.Size / 1024 / 1024) + "MB"
+                    アップロード日時 = ""
                 }) > $null
         }
     }
@@ -194,16 +199,19 @@ $totalSize
     $blobPstFile | Out-File -FilePath $blobPstFilePath -Encoding UTF8
     Invoke-Item -Path $blobPstFilePath
 
-    # $output[$output.Count - 2] # INFO: File count: 2
-    # $output[$output.Count - 1] # INFO: Total file size: 175
     $maxTotalPstFileSize = 90000000000
     if ([Int64]$output[$output.Count - 1].Split(":")[2].Substring(1) -gt $maxTotalPstFileSize) {
-        $str = "アップロード可能なファイルサイズを超えています。\nアップロード済みのファイルを削除する場合は、移行担当者へ連絡をお願いします。\n連絡先 : test@example.com"
+        $str = @"
+アップロード可能なファイルサイズを超えています。
+アップロード済みのファイルを削除する場合は、移行担当者へ連絡をお願いします。
+連絡先 : test@example.com
+"@
         Write-Host "$(Get-Date -Format "yyyy/MM/dd HH:mm:ss") - $($str)"
         Set-ErrorMessage -Message $str
         # return
     }
     # Remove-Item -Path $uploadedFileListPath -Force
+    Set-SystemMessage -Message "アップロード状況確認処理が完了しました。"
 
     return $uploadedPstFile
 }
@@ -255,11 +263,13 @@ function Get-PstFile {
             return
         }
 
-        # ファイル名、ファイル容量、ファイルパスを追加
+        # ファイル名、ファイル容量、ファイルパスを追加 "{0:N1}" -f ([Int64]$fileInfo.Length / 1024 / 1024) + "MB"
         $listViewItem = New-Object System.Windows.Forms.ListViewItem($fileInfo.Name)
-        $listViewItem.SubItems.Add($fileInfo.Length)
+        $listViewItem.SubItems.Add("{0:N1}" -f ([Int64]$fileInfo.Length / 1024 / 1024) + "MB")
         $listViewItem.SubItems.Add($fileInfo.FullName)
         $listView.Items.Add($listViewItem)
+        Set-SystemMessage -Message "ファイルが選択されました。"
+        return
     }
     else {
         # ファイル選択画面を閉じた場合
@@ -288,6 +298,17 @@ function Invoke-PstFileUpload {
     Start-Process -FilePath $azCopyPath -ArgumentList "copy `"$SASURL`" `"$userListLocalPath`" " -NoNewWindow -Wait
     $userList = Import-Csv -Path $userListLocalPath -Encoding UTF8
     $group = $userList | Where-Object { $_.Mail -eq $($emailTextBox1.Text) }
+
+    # 所属グループが存在しない場合
+    if ($null -eq $group.Group) {
+        Set-ErrorMessage -Message @"
+あなたのメールアドレスが移行対象者として登録されていません。
+確認のために、移行担当者へ連絡をお願いします。
+連絡先 : test@example.com
+"@
+        Write-Host "$(Get-Date -Format "yyyy/MM/dd HH:mm:ss") - アップロード処理を中断します。"
+        return
+    }
 
     # 帯域制限リスト読み込み
     $trafficListLocalPath = "$($rootPath)\temp\TrafficControl.csv"
@@ -321,6 +342,7 @@ function Invoke-PstFileUpload {
         } | Export-Csv -Path $uploadedPstLogFilePath -Append -Encoding UTF8 -NoTypeInformation
     }
     Write-Host "$(Get-Date -Format "yyyy/MM/dd HH:mm:ss") - アップロード処理完了。"
+    Set-SystemMessage -Message "アップロード処理が完了しました。"
 
     # 作業ファイルおよび設定削除
     # Remove-Item -Path $userListLocalPath -Force
@@ -348,6 +370,16 @@ function Set-ErrorMessage {
     param (
         [string]$Message
     )
+    $errorLabel.ForeColor = [System.Drawing.Color]::Red
+    $errorLabel.Text = $Message
+}
+
+# システムメッセージの設定
+function Set-SystemMessage {
+    param (
+        [string]$Message
+    )
+    $errorLabel.ForeColor = [System.Drawing.Color]::Black
     $errorLabel.Text = $Message
 }
 
@@ -509,6 +541,17 @@ $pstButton.Add_Click({
         }
     })
 
+# クリアボタン
+$clearButton = New-Object System.Windows.Forms.Button
+$clearButton.Text = "クリア"
+$clearButton.Location = New-Object System.Drawing.Point(100, $heightColumn)
+$form.Controls.Add($clearButton)
+# ボタンがクリックされたときの処理
+$clearButton.Add_Click({
+        $listView.Items.Clear()
+        Set-SystemMessage -Message "選択されたファイルがクリアされました。"
+    })
+
 # １０行のリスト
 $heightColumn += 25
 $listView = New-Object System.Windows.Forms.ListView
@@ -558,7 +601,7 @@ $errorLabel = New-Object System.Windows.Forms.Label
 $errorLabel.Text = ""
 $errorLabel.Location = New-Object System.Drawing.Point(10, $heightColumn)
 $errorLabel.AutoSize = $true
-$errorLabel.ForeColor = [System.Drawing.Color]::Red
+# $errorLabel.ForeColor = [System.Drawing.Color]::Red
 $form.Controls.Add($errorLabel)
 
 # フォームが閉じられたことを検知するイベントハンドラ
