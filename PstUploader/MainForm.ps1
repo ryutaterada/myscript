@@ -2,15 +2,12 @@ Add-Type -AssemblyName System.Windows.Forms
 
 # 変数
 $rootPath = "E:\work\ps\azcopy"
+# $rootPath = "C:\work\PSTUploader"
 $width = 600
 $height = 800
 $azCopyPath = "$($rootPath)\azcopy.exe"
 $StorageAccountName = "azcopyttest1481"
 $SASKey = "sp=racwl&st=2024-03-10T14:04:32Z&se=2024-11-12T22:04:32Z&spr=https&sv=2022-11-02&sr=c&sig=Ld7Nbm9bhwMDRhbGUsGTWhb1BBi%2Fe0h9ydXQSm6eCL4%3D"
-
-# アップロードログの保存
-$uploadedPstLogFilePath = "$($rootPath)\Log\UploadedPstLog.csv"
-$blobPstFilePath = "$($rootPath)\Output\BlobPstFileList.txt"
 
 # フォルダ作成処理
 $worFolderList = ("$($rootPath)\temp", "$($rootPath)\Log", "$($rootPath)\Output")
@@ -38,43 +35,41 @@ function Get-OutlookEmailAddress {
     return $emailAddresses
 }
 
-# BlobStorageからアップロード済みのファイルを収録する関数
+# ローカルおよびBlobStorageからアップロード済みのファイルを検索する処理
 function Get-UploadedPstFile {
     # メールアドレス分解
     $address = ($emailTextBox1.Text).Split("@")[0]
-    # Write-Host $address
-
-    # ユーザーリスト読み込み
-    $userListLocalPath = "$($rootPath)\temp\UserList.csv"
-    $userListBlobPath = "01_Manage/00_Group/UserList.csv"
-    $SASURL = "https://$($StorageAccountName).blob.core.windows.net/migrationwiz/$($userListBlobPath)?$($SASKey)"
-    Start-Process -FilePath $azCopyPath -ArgumentList "copy `"$SASURL`" `"$userListLocalPath`" " -NoNewWindow -Wait
-    $userList = Import-Csv -Path $userListLocalPath -Encoding UTF8
-    $group = $userList | Where-Object { $_.Mail -eq $($emailTextBox1.Text) }
-
-    # 所属グループが存在しない場合
-    if ($null -eq $group.Group) {
-        Set-ErrorMessage -Message @"
-あなたのメールアドレスが移行対象者として登録されていません。
-確認のために、移行担当者へ連絡をお願いします。
-連絡先 : test@example.com
-"@
-    }
-
-    # 作業ファイルおよび設定削除
-    # Remove-Item -Path $userListLocalPath -Force
 
     # 検索対象フォルダを指定
     $localFolders = @(
-        "E:\work\ps\azcopy"
-        # "C:\",
-        # "D:\"
+        "C:\",
+        "D:\"
     )
 
     # PSTカウント変数
     $totalCount = 0
     $totalSize = 0
     $LocalPSTInfoList = [System.Collections.ArrayList]@()
+
+    # 出力フォルダパス
+    $localPSTListPath = "$($rootPath)\Output\PCData.txt"
+    $blobPstFilePath = "$($rootPath)\Output\BlobPstFileList_$($address).txt"
+
+    # ユーザーリスト読み込み
+    $userListLocalPath = "$($rootPath)\temp\UserList.csv"
+    $userListBlobPath = "01_Manage/00_Group/UserList.csv"
+    $SASURL = "https://$($StorageAccountName).blob.core.windows.net/migrationwiz/$($userListBlobPath)?$($SASKey)"
+    Write-Host "$(Get-Date -Format "yyyy/MM/dd HH:mm:ss") - 移行対象ユーザーリストを取得します。"
+    Start-Process -FilePath $azCopyPath -ArgumentList "copy $($SASURL) $($userListLocalPath)" -NoNewWindow -Wait -RedirectStandardOutput "NUL"
+    Write-Host "$(Get-Date -Format "yyyy/MM/dd HH:mm:ss") - 移行対象ユーザーリストの取得完了。"
+    $userList = Import-Csv -Path $userListLocalPath -Encoding UTF8
+    $group = $userList | Where-Object { $_.Mail -eq $($emailTextBox1.Text) }
+
+    # 所属グループが存在しない場合 エラーメッセージを表示し、フォルダ検索処理は継続する。
+    if ($null -eq $group.Group) {
+        Write-Host "$(Get-Date -Format "yyyy/MM/dd HH:mm:ss") - あなたのメールアドレスが移行対象者として登録されていません。"
+        Set-ErrorMessage -Message "あなたのメールアドレスが移行対象者として登録されていません。"
+    }
 
     # PSTファイルを検索
     foreach ($localFolder in $localFolders) {
@@ -99,8 +94,7 @@ function Get-UploadedPstFile {
         Clear-Variable -Name localPSTFiles
     }
 
-    # PSTデータ保存処理
-    $localPSTListPath = "$($rootPath)\PSTFileList.txt"
+    # ローカルPCデータの出力
     $LocalPSTList = @"
 $hostname
 $ipAddress
@@ -112,14 +106,11 @@ $totalSize
     }
     $LocalPSTList | Out-File -FilePath $localPSTListPath -Encoding UTF8
 
-    # ローカルのPSTファイルアップロードログを取得
-    # $uploadedPstLog = Import-Csv -Path $uploadedPstLogFilePath -Encoding UTF8
-
     # azcopy listコマンドを実行してアップロード済みのPSTファイルを取得
     $destinationPath = "00_User/$($group.Group)/$($address)/00_UserUpload/"
     $SASURL = "https://$($StorageAccountName).blob.core.windows.net/migrationwiz/$($destinationPath)?$($SASKey)"
     $uploadedFileListPath = "$($rootPath)\temp\UploadedFileList.txt"
-    Start-Process -FilePath $azCopyPath -ArgumentList "list `"$SASURL`" --running-tally --machine-readable" -NoNewWindow -Wait -RedirectStandardOutput $uploadedFileListPath
+    Start-Process -FilePath $azCopyPath -ArgumentList "list $($SASURL) --running-tally --machine-readable" -NoNewWindow -Wait -RedirectStandardOutput $uploadedFileListPath
     $output = Get-Content -Path $uploadedFileListPath
     $blobPstFile = [System.Collections.ArrayList]@()
     for ($i = 0; $i -lt $output.Count - 3; $i++) {
@@ -132,40 +123,44 @@ $totalSize
         $blobUploadDate = ([DateTime]::ParseExact($blobUploadDate, "yyyyMMddHHmmss", $null)).ToString("yyyy/MM/dd HH:mm:ss")
 
         # Blobのファイル名とローカルのファイル名を比較
-        $LocalPSTIndex = $LocalPSTInfoList.Name.IndexOf($blobUploadFileName)
+        # $LocalPSTIndex = $LocalPSTInfoList.Name.IndexOf($blobUploadFileName)
+
+        # # アップロード済みかどうかを判定
+        # if (
+        #     $blobUploadFileName -in $LocalPSTInfoList.Name -and
+        #     $blobUploadFileSize -in $LocalPSTInfoList[$LocalPSTIndex].Size -and
+        #     $LocalPSTIndex -ne -1) {
+        #     $flag = "クラウドにアップロード済み"
+        #     $blobUploadFilePath = $LocalPSTInfoList[$LocalPSTIndex].FilePath
+        # }
+        # elseif (
+        #     $blobUploadFileName -in $LocalPSTInfoList.Name -and
+        #     [Int64]$blobUploadFileSize -lt [Int64]$LocalPSTInfoList[$LocalPSTIndex].Size -and
+        #     $LocalPSTIndex -ne -1) {
+        #     $flag = "クラウドにアップロード済み&容量増加"
+        #     $blobUploadFilePath = $LocalPSTInfoList[$LocalPSTIndex].FilePath
+        # }
+        # elseif (
+        #     $blobUploadFileName -in $LocalPSTInfoList.Name -and
+        #     [Int64]$blobUploadFileSize -gt [Int64]$LocalPSTInfoList[$LocalPSTIndex].Size -and
+        #     $LocalPSTIndex -ne -1) {
+        #     $flag = "クラウドにアップロード済み&容量減少(別ファイルまたはバックアップファイル)"
+        #     $blobUploadFilePath = $LocalPSTInfoList[$LocalPSTIndex].FilePath
+        # }
+        # else {
+        #     $flag = "クラウドにアップロード済み&PC内にファイルが存在しない"
+        #     $blobUploadFilePath = "PC内にファイルが存在しない"
+        # }
+
         # アップロード済みかどうかを判定
-        if (
-            $blobUploadFileName -in $LocalPSTInfoList.Name -and
-            $blobUploadFileSize -in $LocalPSTInfoList[$LocalPSTIndex].Size -and
-            $LocalPSTIndex -ne -1) {
+        if ($blobUploadFileName -in $LocalPSTInfoList.Name) {
             $flag = "クラウドにアップロード済み"
-            $blobUploadFilePath = $LocalPSTInfoList[$LocalPSTIndex].FilePath
-        }
-        elseif (
-            $blobUploadFileName -in $LocalPSTInfoList.Name -and
-            [Int64]$blobUploadFileSize -lt [Int64]$LocalPSTInfoList[$LocalPSTIndex].Size -and
-            $LocalPSTIndex -ne -1) {
-            $flag = "クラウドにアップロード済み&容量増加"
-            $blobUploadFilePath = $LocalPSTInfoList[$LocalPSTIndex].FilePath
-        }
-        elseif (
-            $blobUploadFileName -in $LocalPSTInfoList.Name -and
-            [Int64]$blobUploadFileSize -gt [Int64]$LocalPSTInfoList[$LocalPSTIndex].Size -and
-            $LocalPSTIndex -ne -1) {
-            $flag = "クラウドにアップロード済み&容量減少(別ファイルまたはバックアップファイル)"
-            $blobUploadFilePath = $LocalPSTInfoList[$LocalPSTIndex].FilePath
+            $blobUploadFilePath = $LocalPSTInfoList[$LocalPSTInfoList.Name.IndexOf($blobUploadFileName)].FilePath
         }
         else {
             $flag = "クラウドにアップロード済み&PC内にファイルが存在しない"
             $blobUploadFilePath = "PC内にファイルが存在しない"
         }
-
-        # ファイルサイズを数値に変換
-        # $blobUploadFileSize = [Int64]$blobUploadFileSize
-        # # バイト単位をMB単位に変換
-        # $blobUploadFileSizeMB = $blobUploadFileSize / 1024 / 1024
-        # 少数第1位まで表示
-        # $blobUploadFileSizeMB = "{0:N1}" -f ([Int64]$blobUploadFileSize / 1024 / 1024)
 
         # ファイル情報を追加
         $blobPstFile.Add([PSCustomObject]@{
@@ -182,7 +177,6 @@ $totalSize
 
     # ローカルにあってクラウドにないファイルの突合
     foreach ($LocalPSTInfo in $LocalPSTInfoList) {
-        Write-Host "Debug: LocalPSTInfo: $($LocalPSTInfo | Out-String)"
         if (-Not($LocalPSTInfo.Name -in $blobPstFile.Name)) {
             $blobPstFile.Add([PSCustomObject]@{
                     メールアドレス  = $address
@@ -195,56 +189,44 @@ $totalSize
         }
     }
 
-    # テキストとして表示
+    # テキストとして保存&表示
     $blobPstFile | Out-File -FilePath $blobPstFilePath -Encoding UTF8
     Invoke-Item -Path $blobPstFilePath
 
     $maxTotalPstFileSize = 90000000000
     if ([Int64]$output[$output.Count - 1].Split(":")[2].Substring(1) -gt $maxTotalPstFileSize) {
         $str = @"
-アップロード可能なファイルサイズを超えています。
+アップロード可能なファイルサイズ(90GB)を超えています。
 アップロード済みのファイルを削除する場合は、移行担当者へ連絡をお願いします。
-連絡先 : test@example.com
 "@
         Write-Host "$(Get-Date -Format "yyyy/MM/dd HH:mm:ss") - $($str)"
         Set-ErrorMessage -Message $str
-        # return
+        return
     }
-    # Remove-Item -Path $uploadedFileListPath -Force
-    Set-SystemMessage -Message "アップロード状況確認処理が完了しました。"
 
-    return $uploadedPstFile
+    Set-SystemMessage -Message "アップロード状況確認処理が完了しました。"
+    return
 }
 
 # PSTファイル取得関数を追加
 function Get-PstFile {
-    # param (
-    #     OptionalParameters
-    # )
-
-    # サイズ制限確認処理
-    # $maxTotalPstFileSize = 30000000000
     # サイズ制限設定ファイル読み込み
     $sizeLimitConfigLocalPath = "$($rootPath)\temp\SizeLimitConfig"
     $sizeLimitConfigBlobPath = "01_Manage/01_SizeLimit/SizeLimitConfig"
     $SASURL = "https://$($StorageAccountName).blob.core.windows.net/migrationwiz/$($sizeLimitConfigBlobPath)?$($SASKey)"
-    Start-Process -FilePath $azCopyPath -ArgumentList "copy `"$SASURL`" `"$sizeLimitConfigLocalPath`" " -NoNewWindow -Wait
+    Start-Process -FilePath $azCopyPath -ArgumentList "copy $($SASURL) $($sizeLimitConfigLocalPath)" -NoNewWindow -Wait -RedirectStandardOutput "NUL"
     $sizeLimitConfig = Get-Content -Path $sizeLimitConfigLocalPath -Encoding UTF8
-    # 作業ファイルおよび設定削除
-    # Remove-Item -Path $userListLocalPath -Force
 
-
+    # ファイル選択ダイアログを表示
     $openFileDialog = New-Object System.Windows.Forms.OpenFileDialog
     $openFileDialog.Title = "ファイルを選択"
     $openFileDialog.Filter = "PSTファイル (*.pst)|*.pst"
-    $openFileDialog.InitialDirectory = [Environment]::GetFolderPath("MyDocuments")
+    $openFileDialog.InitialDirectory = [Environment]::GetFolderPath("MyDocuments") + "\Outlook データファイル"
 
     if ($openFileDialog.ShowDialog() -eq 'OK') {
-        # $selectedFile = $openFileDialog.FileName
-        Write-Host "$(Get-Date -Format "yyyy/MM/dd HH:mm:ss") - 選択されたファイル: $($openFileDialog.FileName)"
-
         # ファイル情報を取得
         $fileInfo = Get-Item $openFileDialog.FileName
+        Write-Host "$(Get-Date -Format "yyyy/MM/dd HH:mm:ss") - 選択されたファイル: $($openFileDialog.FileName)"
 
         # PSTファイル以外が選択された場合
         if ($openFileDialog.FileName -notlike "*.pst") {
@@ -257,7 +239,7 @@ function Get-PstFile {
 
         # サイズ制限確認
         if ([Int64]$fileInfo.Length -gt ([Int64]$sizeLimitConfig * 1024 * 1024 * 1024)) {
-            $str = "ファイルサイズが制限を超えています。$($sizeLimitConfig)GB以上のPSTファイルはマニュアルのxxPを確認してください。。"
+            $str = "ファイルサイズが制限を超えています。$($sizeLimitConfig)GB以上のPSTファイルは本ツールでの移行対象外です。"
             Write-Host "$(Get-Date -Format "yyyy/MM/dd HH:mm:ss") - $($str)"
             Set-ErrorMessage -Message $str
             return
@@ -288,25 +270,26 @@ function Invoke-PstFileUpload {
 
     # メールアドレス分解
     $address = ($emailTextBox1.Text).Split("@")[0]
-    Write-Host $address
+
+    # アップロードログの保存
+    $uploadedPstLogFilePath = "$($rootPath)\Log\UploadedPstLog_$($address).csv"
 
     # ユーザーリスト読み込み
     Write-Host "$(Get-Date -Format "yyyy/MM/dd HH:mm:ss") - 設定ファイルを読み込みます。"
     $userListLocalPath = "$($rootPath)\temp\UserList.csv"
     $userListBlobPath = "01_Manage/00_Group/UserList.csv"
     $SASURL = "https://$($StorageAccountName).blob.core.windows.net/migrationwiz/$($userListBlobPath)?$($SASKey)"
-    Start-Process -FilePath $azCopyPath -ArgumentList "copy `"$SASURL`" `"$userListLocalPath`" " -NoNewWindow -Wait
+    Start-Process -FilePath $azCopyPath -ArgumentList "copy $($SASURL) $($userListLocalPath)" -NoNewWindow -Wait -RedirectStandardOutput "NUL"
     $userList = Import-Csv -Path $userListLocalPath -Encoding UTF8
     $group = $userList | Where-Object { $_.Mail -eq $($emailTextBox1.Text) }
 
     # 所属グループが存在しない場合
     if ($null -eq $group.Group) {
+        Write-Host "$(Get-Date -Format "yyyy/MM/dd HH:mm:ss") - あなたのメールアドレスが移行対象者として登録されていません。アップロード処理を中断します。"
         Set-ErrorMessage -Message @"
 あなたのメールアドレスが移行対象者として登録されていません。
-確認のために、移行担当者へ連絡をお願いします。
-連絡先 : test@example.com
+アップロード処理を中断します。
 "@
-        Write-Host "$(Get-Date -Format "yyyy/MM/dd HH:mm:ss") - アップロード処理を中断します。"
         return
     }
 
@@ -314,7 +297,7 @@ function Invoke-PstFileUpload {
     $trafficListLocalPath = "$($rootPath)\temp\TrafficControl.csv"
     $trafficListBlobPath = "01_Manage/00_Group/TrafficControl.csv"
     $SASURL = "https://$($StorageAccountName).blob.core.windows.net/migrationwiz/$($trafficListBlobPath)?$($SASKey)"
-    Start-Process -FilePath $azCopyPath -ArgumentList "copy `"$SASURL`" `"$trafficListLocalPath`" " -NoNewWindow -Wait
+    Start-Process -FilePath $azCopyPath -ArgumentList "copy $($SASURL) $($trafficListLocalPath)" -NoNewWindow -Wait -RedirectStandardOutput "NUL"
     $trafficControlList = Import-Csv -Path $trafficListLocalPath -Encoding UTF8
     Write-Host "$(Get-Date -Format "yyyy/MM/dd HH:mm:ss") - 設定ファイルの読み込み完了。"
     # 帯域制限設定
@@ -322,31 +305,48 @@ function Invoke-PstFileUpload {
     $NetQoSPolicyName = "AzCopyPolicy01"
     $DSCPAction = 1
     Write-Host "$(Get-Date -Format "yyyy/MM/dd HH:mm:ss") - ネットワーク事前設定を実行。"
-    New-NetQosPolicy -Name $NetQoSPolicyName -AppPathNameMatchCondition $azCopyPath -DSCPAction $DSCPAction -ThrottleRateActionBitsPerSecond $bpsRate -Precedence 0
+    if (-Not(Get-NetQosPolicy -Name $NetQoSPolicyName -ErrorAction SilentlyContinue)) {
+        New-NetQosPolicy -Name $NetQoSPolicyName -AppPathNameMatchCondition $azCopyPath -DSCPAction $DSCPAction -ThrottleRateActionBitsPerSecond $bpsRate -Precedence 0
+    }
 
     # ファイルアップロード処理
-    Write-Host "$(Get-Date -Format "yyyy/MM/dd HH:mm:ss") - アップロード処理開始。"
+    Write-Host "$(Get-Date -Format "yyyy/MM/dd HH:mm:ss") - 選択されたファイルのアップロード処理開始。"
     foreach ($item in $ItemList) {
-        Write-Host "$(Get-Date -Format "yyyy/MM/dd HH:mm:ss") - $($item.SubItems[0].Text)のアップロード。"
+        Write-Host "$(Get-Date -Format "yyyy/MM/dd HH:mm:ss") - $($item.SubItems[0].Text)のアップロードを開始。"
         $filePath = $item.SubItems[2].Text
         $time = Get-Date -Format "yyyyMMddHHmmss"
         Start-Sleep -Seconds 1
         $destinationPath = "00_User/$($group.Group)/$($address)/00_UserUpload/$($time)/"
         $SASURL = "https://$($StorageAccountName).blob.core.windows.net/migrationwiz/$($destinationPath)?$($SASKey)"
-        Start-Process -FilePath $azCopyPath -ArgumentList "copy `"$filePath`" `"$SASURL`"" -Wait
-        [PSCustomObject]@{
-            Address  = $address
-            Time     = $time
-            FilePath = $item.SubItems[2].Text
-            FileSize = $item.SubItems[1].Text
-        } | Export-Csv -Path $uploadedPstLogFilePath -Append -Encoding UTF8 -NoTypeInformation
+        try {
+            Start-Process -FilePath $azCopyPath -ArgumentList "copy $($filePath) $($SASURL)" -Wait
+            [PSCustomObject]@{
+                Address  = $address
+                Time     = $time
+                FilePath = $item.SubItems[2].Text
+                FileSize = $item.SubItems[1].Text
+            } | Export-Csv -Path $uploadedPstLogFilePath -Append -Encoding UTF8 -NoTypeInformation
+            Write-Host "$(Get-Date -Format "yyyy/MM/dd HH:mm:ss") - $($item.SubItems[0].Text)のアップロードが完了。"
+        }
+        catch {
+            # エラーが発生した場合 ×ボタンによるキャンセルかどうかの判定処理を追加
+            if ($_.Exception.Message -eq "The user closed the window.") {
+                Write-Host "$(Get-Date -Format "yyyy/MM/dd HH:mm:ss") - ファイルのアップロードがキャンセルされました。"
+                Set-SystemMessage -Message "ファイルのアップロードがキャンセルされました。"
+                return
+            }
+            else {
+                $errorMessage = $_.Exception.Message
+                Write-Host "$(Get-Date -Format "yyyy/MM/dd HH:mm:ss") - エラーが発生しました: $($errorMessage)"
+                Set-ErrorMessage -Message "アップロードエラーが発生しました。"
+                return
+            }
+        }
     }
-    Write-Host "$(Get-Date -Format "yyyy/MM/dd HH:mm:ss") - アップロード処理完了。"
-    Set-SystemMessage -Message "アップロード処理が完了しました。"
+    Write-Host "$(Get-Date -Format "yyyy/MM/dd HH:mm:ss") - 選択されたファイルのアップロード処理完了。"
+    Set-SystemMessage -Message "選択されたファイルのアップロード処理が完了しました。"
 
-    # 作業ファイルおよび設定削除
-    # Remove-Item -Path $userListLocalPath -Force
-    # Remove-Item -Path $trafficListLocalPath -Force
+    # ネットワーク設定削除
     Remove-NetQosPolicy -Name $NetQoSPolicyName -Confirm:$false
 
     # リストクリア
@@ -396,9 +396,12 @@ function Test-OutlookRunning {
     return $true
 }
 
+# 起動時Outlook確認
+Test-OutlookRunning > $null
+
 # フォームを作成
 $form = New-Object System.Windows.Forms.Form
-$form.Text = "新PC移行用PSTアップロード"
+$form.Text = "新PCメールデータ移行ツール"
 $form.Size = New-Object System.Drawing.Size($width, $height)
 
 # 説明文章を追加
@@ -419,7 +422,7 @@ $form.Controls.Add($emailLabel1)
 
 $emailTextBox1 = New-Object System.Windows.Forms.TextBox
 $emailTextBox1.Location = New-Object System.Drawing.Point(150, $heightColumn)
-$emailTextBox1.Text = "test@example.com" # Set initial value
+$emailTextBox1.Text = Get-OutlookEmailAddress # Set initial value
 $emailTextBox1.Width = 390 # Set the width of the text box
 $emailTextBox1.Enabled = $false # Make the text box read-only by default
 $form.Controls.Add($emailTextBox1)
@@ -434,7 +437,7 @@ $form.Controls.Add($emailLabel2)
 
 $emailTextBox2 = New-Object System.Windows.Forms.TextBox
 $emailTextBox2.Location = New-Object System.Drawing.Point(150, $heightColumn)
-$emailTextBox2.Text = "test@example.com" # Set initial value
+$emailTextBox2.Text = $emailTextBox1.Text # Set initial value
 $emailTextBox2.Width = 390 # Set the width of the text box
 $emailTextBox2.Enabled = $false # Make the text box read-only by default
 $form.Controls.Add($emailTextBox2)
@@ -610,6 +613,12 @@ $form.Add_FormClosed({
         Stop-Transcript
         Stop-Process -Id $PID
     })
+
+# AzCopyの存在確認
+if ( (Test-Path -Path $azCopyPath)) {
+    Write-Host "$(Get-Date -Format "yyyy/MM/dd HH:mm:ss") - AzCopyモジュールが見つかりません。"
+    Set-ErrorMessage -Message "AzCopyモジュールが見つかりません。作業が実施できません。"
+}
 
 # フォームを表示
 $form.ShowDialog()
