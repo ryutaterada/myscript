@@ -1,13 +1,13 @@
 Add-Type -AssemblyName System.Windows.Forms
 
 # 変数
-$rootPath = "E:\work\ps\azcopy"
-# $rootPath = "C:\work\PSTUploader"
+# $rootPath = "E:\work\ps\azcopy"
+$rootPath = "C:\work\新PCメールデータ移行ツール"
 $width = 600
 $height = 800
 $azCopyPath = "$($rootPath)\azcopy.exe"
-$StorageAccountName = "azcopyttest1481"
-$SASKey = "sp=racwl&st=2024-03-10T14:04:32Z&se=2024-11-12T22:04:32Z&spr=https&sv=2022-11-02&sr=c&sig=Ld7Nbm9bhwMDRhbGUsGTWhb1BBi%2Fe0h9ydXQSm6eCL4%3D"
+$StorageAccountName = "tatsumiexostorage1"
+$SASKey = "sp=racwl&st=2024-05-01T05:23:15Z&se=2024-07-31T13:23:15Z&spr=https&sv=2022-11-02&sr=c&sig=xa0rp1MHa%2BYrdEOeCUv9QpBGDHEoGhdmREq2OO7k5Xo%3D"
 
 # フォルダ作成処理
 $worFolderList = ("$($rootPath)\temp", "$($rootPath)\Log", "$($rootPath)\Output")
@@ -23,6 +23,7 @@ Start-Transcript -Path $transcriptPath
 
 # メールアドレス取得関数を追加
 function Get-OutlookEmailAddress {
+    Test-OutlookRunning > $null
     Add-Type -AssemblyName "Microsoft.Office.Interop.Outlook"
     $outlook = New-Object -ComObject "Outlook.Application"
     $namespace = $outlook.GetNamespace("MAPI")
@@ -33,6 +34,16 @@ function Get-OutlookEmailAddress {
     }
     $outlook.Quit()
     return $emailAddresses
+}
+
+# 16進数文字列を10進数に変換する関数を定義
+function Convert-HexToDecimal {
+    param (
+        [string]$hexString
+    )
+
+    $decimalValue = [convert]::ToInt32($hexString, 16) / 60
+    return $decimalValue
 }
 
 # ローカルおよびBlobStorageからアップロード済みのファイルを検索する処理
@@ -275,22 +286,22 @@ function Invoke-PstFileUpload {
     $uploadedPstLogFilePath = "$($rootPath)\Log\UploadedPstLog_$($address).csv"
 
     # ユーザーリスト読み込み
-    Write-Host "$(Get-Date -Format "yyyy/MM/dd HH:mm:ss") - 設定ファイルを読み込みます。"
     $userListLocalPath = "$($rootPath)\temp\UserList.csv"
     $userListBlobPath = "01_Manage/00_Group/UserList.csv"
     $SASURL = "https://$($StorageAccountName).blob.core.windows.net/migrationwiz/$($userListBlobPath)?$($SASKey)"
+    Write-Host "$(Get-Date -Format "yyyy/MM/dd HH:mm:ss") - 移行対象ユーザーリストを取得します。"
     Start-Process -FilePath $azCopyPath -ArgumentList "copy $($SASURL) $($userListLocalPath)" -NoNewWindow -Wait -RedirectStandardOutput "NUL"
+    Write-Host "$(Get-Date -Format "yyyy/MM/dd HH:mm:ss") - 移行対象ユーザーリストの取得完了。"
     $userList = Import-Csv -Path $userListLocalPath -Encoding UTF8
     $group = $userList | Where-Object { $_.Mail -eq $($emailTextBox1.Text) }
 
-    # 所属グループが存在しない場合
+    Write-Host "$($group.Group) - グループ情報"
+    Write-Host "$($emailTextBox1.Text) - メールアドレス情報"
+
+    # 所属グループが存在しない場合 エラーメッセージを表示し、フォルダ検索処理は継続する。
     if ($null -eq $group.Group) {
         Write-Host "$(Get-Date -Format "yyyy/MM/dd HH:mm:ss") - あなたのメールアドレスが移行対象者として登録されていません。アップロード処理を中断します。"
-        Set-ErrorMessage -Message @"
-あなたのメールアドレスが移行対象者として登録されていません。
-アップロード処理を中断します。
-"@
-        return
+        Set-ErrorMessage -Message "あなたのメールアドレスが移行対象者として登録されていません。アップロード処理を中断します。"
     }
 
     # 帯域制限リスト読み込み
@@ -306,8 +317,38 @@ function Invoke-PstFileUpload {
     $DSCPAction = 1
     Write-Host "$(Get-Date -Format "yyyy/MM/dd HH:mm:ss") - ネットワーク事前設定を実行。"
     if (-Not(Get-NetQosPolicy -Name $NetQoSPolicyName -ErrorAction SilentlyContinue)) {
-        New-NetQosPolicy -Name $NetQoSPolicyName -AppPathNameMatchCondition $azCopyPath -DSCPAction $DSCPAction -ThrottleRateActionBitsPerSecond $bpsRate -Precedence 0
+        New-NetQosPolicy -Name $NetQoSPolicyName -AppPathNameMatchCondition $azCopyPath -DSCPAction $DSCPAction -ThrottleRateActionBitsPerSecond $bpsRate.Speed -Precedence 0
     }
+
+    # 電源オプション変更処理
+    Write-Host "$(Get-Date -Format "yyyy/MM/dd HH:mm:ss") - 電源オプションを変更します。"
+
+    # 現在の電源プランの詳細を取得
+    $powercfgOutput = powercfg /q
+    $powercfgOutput | Out-File -FilePath "$($rootPath)\temp\PowerPlanDetail.txt" -Encoding UTF8
+
+    # ディスプレイの電源を切る設定を「適用しない」に設定 VIDEOIDLE
+    $MonitorTimeoutLine = $powercfgOutput -split "`n" | Select-String -Pattern "VIDEOIDLE" | Select-Object -ExpandProperty LineNumber
+    $MonitorTimeoutAC = Convert-HexToDecimal -hexString $powercfgOutput[$MonitorTimeoutLine + 4].Split(":")[1].Trim()
+    $MonitorTimeoutDC = Convert-HexToDecimal -hexString $powercfgOutput[$MonitorTimeoutLine + 5].Split(":")[1].Trim()
+    powercfg /Change monitor-timeout-ac 0
+    powercfg /Change monitor-timeout-dc 0
+
+    # コンピューターをスリープ状態にする設定を「適用しない」に設定 STANDBYIDLE
+    $StandbyTimeoutLine = $powercfgOutput -split "`n" | Select-String -Pattern "STANDBYIDLE" | Select-Object -ExpandProperty LineNumber
+    $StandbyTimeoutAC = Convert-HexToDecimal -hexString $powercfgOutput[$StandbyTimeoutLine + 4].Split(":")[1].Trim()
+    $StandbyTimeoutDC = Convert-HexToDecimal -hexString $powercfgOutput[$StandbyTimeoutLine + 5].Split(":")[1].Trim()
+    powercfg /Change standby-timeout-ac 0
+    powercfg /Change standby-timeout-dc 0
+
+    # カバーを閉じたときの動作を「何もしない」に設定
+    # AC電源接続時の設定
+    powercfg /setacvalueindex scheme_current sub_238c9fa8-0aad-41ed-83f4-97be242c8f20 5ca83367-6e45-459f-a27b-476b1d01c936 0
+    # バッテリー接続時の設定
+    powercfg /setdcvalueindex scheme_current sub_238c9fa8-0aad-41ed-83f4-97be242c8f20 5ca83367-6e45-459f-a27b-476b1d01c936 0
+    # 変更を適用
+    powercfg /SetActive scheme_current
+    Write-Host "$(Get-Date -Format "yyyy/MM/dd HH:mm:ss") - 電源プランの設定を変更しました。"
 
     # ファイルアップロード処理
     Write-Host "$(Get-Date -Format "yyyy/MM/dd HH:mm:ss") - 選択されたファイルのアップロード処理開始。"
@@ -318,39 +359,47 @@ function Invoke-PstFileUpload {
         Start-Sleep -Seconds 1
         $destinationPath = "00_User/$($group.Group)/$($address)/00_UserUpload/$($time)/"
         $SASURL = "https://$($StorageAccountName).blob.core.windows.net/migrationwiz/$($destinationPath)?$($SASKey)"
-        try {
-            Start-Process -FilePath $azCopyPath -ArgumentList "copy $($filePath) $($SASURL)" -Wait
-            [PSCustomObject]@{
-                Address  = $address
-                Time     = $time
-                FilePath = $item.SubItems[2].Text
-                FileSize = $item.SubItems[1].Text
-            } | Export-Csv -Path $uploadedPstLogFilePath -Append -Encoding UTF8 -NoTypeInformation
-            Write-Host "$(Get-Date -Format "yyyy/MM/dd HH:mm:ss") - $($item.SubItems[0].Text)のアップロードが完了。"
+
+        $process = Start-Process -FilePath $azCopyPath -ArgumentList "copy `"$($filePath)`" `"$($SASURL)`"" -Wait -PassThru
+        Write-Host "DEBUG: $($a)"
+        [PSCustomObject]@{
+            Address  = $address
+            Time     = $time
+            FilePath = $item.SubItems[2].Text
+            FileSize = $item.SubItems[1].Text
+        } | Export-Csv -Path $uploadedPstLogFilePath -Append -Encoding UTF8 -NoTypeInformation
+        Write-Host "$(Get-Date -Format "yyyy/MM/dd HH:mm:ss") - $($item.SubItems[0].Text)のアップロードが完了。"
+
+        # エラーが発生した場合 ×ボタンによるキャンセルかどうかの判定処理を追加 $($process.ExitCode)"
+        if ($process.Exception.Message -eq "The user closed the window.") {
+            Write-Host "$(Get-Date -Format "yyyy/MM/dd HH:mm:ss") - ファイルのアップロードがキャンセルされました。"
+            Set-SystemMessage -Message "ファイルのアップロードがキャンセルされました。"
+            return
         }
-        catch {
-            # エラーが発生した場合 ×ボタンによるキャンセルかどうかの判定処理を追加
-            if ($_.Exception.Message -eq "The user closed the window.") {
-                Write-Host "$(Get-Date -Format "yyyy/MM/dd HH:mm:ss") - ファイルのアップロードがキャンセルされました。"
-                Set-SystemMessage -Message "ファイルのアップロードがキャンセルされました。"
-                return
-            }
-            else {
-                $errorMessage = $_.Exception.Message
-                Write-Host "$(Get-Date -Format "yyyy/MM/dd HH:mm:ss") - エラーが発生しました: $($errorMessage)"
-                Set-ErrorMessage -Message "アップロードエラーが発生しました。"
-                return
-            }
+        elseif ($null -ne $process.Exception) {
+            $errorMessage = $_.Exception.Message
+            Write-Host "$(Get-Date -Format "yyyy/MM/dd HH:mm:ss") - エラーが発生しました: $($errorMessage)"
+            Set-ErrorMessage -Message "アップロードエラーが発生しました。"
+            return
         }
     }
     Write-Host "$(Get-Date -Format "yyyy/MM/dd HH:mm:ss") - 選択されたファイルのアップロード処理完了。"
     Set-SystemMessage -Message "選択されたファイルのアップロード処理が完了しました。"
 
     # ネットワーク設定削除
+    Write-Host "$(Get-Date -Format "yyyy/MM/dd HH:mm:ss") - ネットワーク事前設定を削除します。"
     Remove-NetQosPolicy -Name $NetQoSPolicyName -Confirm:$false
 
+    # 電源オプション変更処理
+    Write-Host "$(Get-Date -Format "yyyy/MM/dd HH:mm:ss") - 電源オプションを元に戻します。"
+    powercfg /Change monitor-timeout-ac $MonitorTimeoutAC
+    powercfg /Change monitor-timeout-dc $MonitorTimeoutDC
+    powercfg /Change standby-timeout-ac $StandbyTimeoutAC
+    powercfg /Change standby-timeout-dc $StandbyTimeoutDC
+    powercfg /SetActive scheme_current
+
     # リストクリア
-    $listView.Items.Clear()
+    # $listView.Items.Clear()
 }
 
 # メールアドレス一致チェック関数を追加
@@ -365,6 +414,26 @@ function Test-EmailAddress {
     return $true
 }
 
+function Test-OutlookRunning {
+    # Get-ProcessコマンドレットでOutlookのプロセスを取得
+    Write-Host "DEBUG: Outlook判定。"
+    $outlookProcess = Get-Process -Name "OUTLOOK" -ErrorAction SilentlyContinue
+    if ($null -ne $outlookProcess) {
+        Write-Host "DEBUG: Outlookが実行中です。"
+        $str = "Outlookが実行中です。終了してください。"
+        while ($true) {
+            $result = [System.Windows.Forms.MessageBox]::Show($str, "警告", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Warning)
+            if ($result -eq [System.Windows.Forms.DialogResult]::OK) {
+                break
+            }
+        }
+        Set-ErrorMessage -Message $str
+        return $false
+    }
+    Write-Host "DEBUG: Outlookが実行中ではありません。"
+    # プロセスが存在しない場合は$trueを、存在する場合は$falseを返す
+    return $true
+}
 # エラーメッセージの設定
 function Set-ErrorMessage {
     param (
@@ -382,22 +451,6 @@ function Set-SystemMessage {
     $errorLabel.ForeColor = [System.Drawing.Color]::Black
     $errorLabel.Text = $Message
 }
-
-function Test-OutlookRunning {
-    # Get-ProcessコマンドレットでOutlookのプロセスを取得
-    $outlookProcess = Get-Process -Name "OUTLOOK" -ErrorAction SilentlyContinue
-    if ($null -ne $outlookProcess) {
-        $str = "Outlookが実行中です。終了してください。"
-        [System.Windows.Forms.MessageBox]::Show($str, "警告", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Warning)
-        Set-ErrorMessage -Message $str
-        return $false
-    }
-    # プロセスが存在しない場合は$trueを、存在する場合は$falseを返す
-    return $true
-}
-
-# 起動時Outlook確認
-Test-OutlookRunning > $null
 
 # フォームを作成
 $form = New-Object System.Windows.Forms.Form
@@ -422,9 +475,9 @@ $form.Controls.Add($emailLabel1)
 
 $emailTextBox1 = New-Object System.Windows.Forms.TextBox
 $emailTextBox1.Location = New-Object System.Drawing.Point(150, $heightColumn)
-$emailTextBox1.Text = Get-OutlookEmailAddress # Set initial value
-$emailTextBox1.Width = 390 # Set the width of the text box
-$emailTextBox1.Enabled = $false # Make the text box read-only by default
+$emailTextBox1.Text = Get-OutlookEmailAddress
+$emailTextBox1.Width = 390
+$emailTextBox1.Enabled = $false
 $form.Controls.Add($emailTextBox1)
 
 # メールアドレス入力欄2
@@ -437,9 +490,9 @@ $form.Controls.Add($emailLabel2)
 
 $emailTextBox2 = New-Object System.Windows.Forms.TextBox
 $emailTextBox2.Location = New-Object System.Drawing.Point(150, $heightColumn)
-$emailTextBox2.Text = $emailTextBox1.Text # Set initial value
-$emailTextBox2.Width = 390 # Set the width of the text box
-$emailTextBox2.Enabled = $false # Make the text box read-only by default
+$emailTextBox2.Text = $emailTextBox1.Text
+$emailTextBox2.Width = 390
+$emailTextBox2.Enabled = $false
 $form.Controls.Add($emailTextBox2)
 
 # チェックボックス
@@ -447,7 +500,7 @@ $heightColumn += 25
 $checkBoxLabel = New-Object System.Windows.Forms.Label
 $checkBoxLabel.Text = "メールアドレス編集ボタン："
 $checkBoxLabel.Location = New-Object System.Drawing.Point(10, $heightColumn)
-$checkBoxLabel.Width = 140 # Set the width of the label
+$checkBoxLabel.Width = 140
 $form.Controls.Add($checkBoxLabel)
 
 $checkBox = New-Object System.Windows.Forms.CheckBox
@@ -615,7 +668,7 @@ $form.Add_FormClosed({
     })
 
 # AzCopyの存在確認
-if ( (Test-Path -Path $azCopyPath)) {
+if (-Not (Test-Path -Path $azCopyPath)) {
     Write-Host "$(Get-Date -Format "yyyy/MM/dd HH:mm:ss") - AzCopyモジュールが見つかりません。"
     Set-ErrorMessage -Message "AzCopyモジュールが見つかりません。作業が実施できません。"
 }
